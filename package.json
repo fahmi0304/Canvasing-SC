@@ -1,0 +1,17 @@
+{
+  "name": "canvasing",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aplikasi canvasing penjualan: impor Excel, surat jalan F4, memo tambahan, rekap scan barcode",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.9.0",
+    "bwip-js": "^4.11.4",
+    "express": "^4.22.3",
+    "multer": "^2.4.0",
+    "xlsx": "^0.18.5"
+  }
+}

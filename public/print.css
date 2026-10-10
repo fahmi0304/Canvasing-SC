@@ -1,0 +1,461 @@
+/* ===== Gaya dokumen cetak (F4 standar 215x330mm, margin standar 10mm) ===== */
+@page { size: 215mm 330mm; margin: 10mm; }
+
+/*
+ * FONT TAHSOMA DALAM DOKUMEN CETAK — disajikan aplikasi sendiri (`public/fonts/tahoma-400.woff2`,
+ * 12 KB, subset latin). Permintaan user: "Tulisan surat jalan belum font Tahoma".
+ *
+ * Kenapa harus di-embed: **Tahoma bukan font yang ada di server maupun di Android/iOS**. Tanpa file
+ * ini, `font-family: Tahoma` di mesin tanpa Tahoma jatuh ke font apa saja yang tersedia — terukur di
+ * server ini browser memakai **FreeSerif (font SERIF!)**, sehingga judul & seluruh isi dokumen cetak
+ * tampil serif, bukan Tahoma. File ini berasal dari proyek Wine (LGPL, metrik Tahoma) dan disubset
+ * latin lewat `pyftsubset`.
+ * `url()` RELATIF karena aplikasi dilayani di subpath (lihat jebakan path aset di AGENTS.md).
+ */
+@font-face {
+  font-family: 'TahomaCetak';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/tahoma-400.woff2) format('woff2');
+}
+/*
+ * ROBOTO BOLD (700) untuk JUDUL DOKUMEN — permintaan user: "tulisan laporan cari font tebal yang bagus,
+ * lurus atas dan bawah, tidak ada huruf yang badannya keluar seperti font sekarang".
+ *
+ * Kenapa Roboto dipilih (hasil PENGUKURAN, bukan selera):
+ *   lebar judul terpanjang "LAPORAN PENJUALAN BARANG PER SALES" pada 18pt, kolom kiri kop hanya ±387pt:
+ *     Tahoma 391,5pt (2 baris - font sekarang) · Liberation 393pt · Inter 391,5pt · DejaVu 423,8pt
+ *     Noto Sans 373,5pt (muat tapi ink 1,00 em) · **Roboto 361,5pt (muat 1 baris, ink 0,708 em)**
+ *   Ink = bagian huruf yang benar-benar terlihat; Roboto paling kecil (0,708 em) sehingga TIDAK ada
+ *   huruf yang badannya keluar melewati barisnya (Tahoma 0,958 em, Noto Sans 1,00 em).
+ * Berkas disajikan aplikasi sendiri (subset latin 22 KB) supaya bentuknya sama di semua perangkat.
+ */
+/*
+ * ROBOTO CONDENSED BOLD = font JUDUL yang dipakai (bukan Roboto biasa).
+ * Alasannya hasil pengukuran di dokumen NYATA: kolom kiri kop berbeda-beda lebarnya karena blok
+ * keterangan di kanannya (No. Surat Jalan/Periode) panjangnya berbeda:
+ *   - surat jalan        : kolom kiri 387,8pt
+ *   - laporan per sales  : kolom kiri **343,0pt** (paling sempit)
+ * Judul terpanjang "LAPORAN PENJUALAN BARANG PER SALES" pada 18pt:
+ *   Roboto biasa 361,5pt → TIDAK muat di 343pt (turun 2 baris, inilah "tidak lurus atas-bawah")
+ *   **Roboto Condensed 318,8pt → muat 1 baris** dengan sisa ruang ±24pt sehingga aman.
+ * Ukuran 18pt dipertahankan (permintaan awal user) dan ink-nya 0,708 em (paling kecil dari semua
+ * kandidat) sehingga tidak ada badan huruf yang keluar dari barisnya.
+ */
+/*
+ * FONT NAMA USAHA (Montserrat 800) untuk JUDUL dokumen — permintaan user: "gunakan font Syaif
+ * Collection di header aplikasi untuk tulisan laporan surat jalan". Berkasnya SAMA dengan yang dipakai
+ * header aplikasi (`public/fonts/montserrat-800.woff2`), jadi bentuk hurufnya seragam.
+ * Ditulis di print.css (bukan app.css) karena halaman cetak hanya memuat print.css.
+ */
+@font-face {
+  font-family: 'MontserratCetak';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url(fonts/montserrat-800.woff2) format('woff2');
+}
+
+@font-face {
+  font-family: 'RobotoJudul';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/roboto-condensed-700.woff2) format('woff2');
+}
+
+/* Tahoma BOLD asli (bukan bold buatan browser) — dipakai tulisan perusahaan & nama sales supaya
+   tebalnya benar-benar jelas saat dicetak. */
+@font-face {
+  font-family: 'TahomaCetak';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/tahoma-700.woff2) format('woff2');
+}
+
+:root { --garis: #333; }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/*
+ * Font isi dokumen: Arial tidak ada di server (jatuh ke FreeSerif = serif!), jadi rantainya dimulai
+ * dari **Liberation Sans** (metrik Arial, terpasang di server) → Arial di Windows → Roboto/sans di HP.
+ * Tanpa ini seluruh dokumen tercetak dengan font serif.
+ */
+body.lembar {
+  margin: 0;
+  background: #e9e7f5;
+  color: #111;
+  font-family: 'Liberation Sans', Arial, Helvetica, Roboto, 'DejaVu Sans', sans-serif;
+  font-size: 12pt;              /* ukuran dasar laporan: font 12 (permintaan user) */
+}
+
+/*
+ * Semua ukuran huruf di dalam .dok memakai satuan em, jadi cukup mengubah font-size .dok
+ * untuk menyesuaikan seluruh dokumen. Skrip di views/print.js memilih ukuran terbesar
+ * (mulai dari 12pt) yang masih muat 1 halaman F4.
+ */
+.dok {
+  width: 195mm;           /* 215mm - margin standar 10mm kiri+kanan */
+  min-height: 310mm;      /* 330mm - margin standar 10mm atas+bawah */
+  margin: 8mm auto;
+  padding: 0;
+  font-size: 12pt;
+  background: #fff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  page-break-after: always;
+}
+.dok:last-child { page-break-after: auto; }
+/*
+ * SAAT DICETAK: buang margin layar `8mm auto`. Di layar margin itu untuk jarak pratinjau, tapi di kertas
+ * margin 8mm ikut memakan area cetak (di atas @page margin 10mm) sehingga baris terakhir dokumen bisa
+ * tergeser ke HALAMAN KEDUA (keluhan user: "laporan surat jalan jangan sampai 2 halaman").
+ * Dengan margin 0 saat cetak, isi dokumen mulai tepat di area cetak dan perhitungan `batas` di
+ * `views/print.js` (dokTop + tinggi ruang) menjadi akurat.
+ */
+@media print {
+  .dok { margin: 0 auto; }
+}
+
+.kop { display: flex; align-items: flex-start; justify-content: space-between; gap: 8mm; border-bottom: 1.2pt solid #111; padding-bottom: 1.6mm; }
+/*
+ * LOGO (PNG) di pojok kiri atas + judul di sebelahnya — permintaan user:
+ *  - "tulisan surat jalan dan sc … mepet ke logo" → jarak logo↔tulisan hanya 1,5 mm;
+ *  - "kecilkan logo agar tingginya sama dengan tulisan surat ditambah sc" → `align-self: stretch`
+ *    membuat tinggi logo SELALU sama dengan tinggi blok judul (h1 + baris "SC SUNGLASSES STORE"),
+ *    berapa pun ukuran huruf dokumen yang dipilih skrip (6–16,5pt).
+ * `align-items: flex-start` di `.kop` tetap, jadi kedua blok mulai dari garis atas yang sama.
+ */
+.kop-kiri { display: flex; align-items: flex-start; gap: 1.5mm; min-width: 0; flex: 1 1 auto; }
+/*
+ * PERMINTAAN USER TERAKHIR: **"logo di surat jalan naikkan ukurannya jadi fit tingginya dengan tinggi
+ * No, Nama dan Tanggal"** — jadi tinggi logo sekarang mengikuti blok KETERANGAN (.ident: 3 baris
+ * No/Nama/Tanggal), bukan lagi blok judul (h1 + "SC SUNGLASSES STORE" yang tingginya cuma 14,19 mm).
+ *
+ * Tinggi logo DIHITUNG (bukan diserahkan ke `align-self: stretch`) — dengan stretch, gambar mengambil
+ * ukuran intrinsiknya (512 px = 135 mm!) dan menghimpit blok judul sampai lebarnya 0 sehingga judulnya
+ * terbungkus beberapa baris (kejadian nyata saat revisi lama dibuat).
+ *
+ * Rumusnya PERSIS mengikuti tinggi .ident supaya tetap sama di setiap ukuran huruf dokumen (6–12pt,
+ * ukuran dipilih skrip pasFontLaporan):
+ *   2 baris biasa (No & Tanggal) : 0,94em × 1,2  → 2 × 0,94em × 1,2
+ *   1 baris nama sales (1,1em)   : 0,94em × 1,1 × 1,2   (barisnya sedikit lebih tinggi)
+ *   2 jarak baris (row-gap)      : 2 × 1,2 mm
+ * `em` di sini = ukuran dasar .dok (12pt), sedangkan .ident memakai 0,94em — karena itu semua suku
+ * ditulis dalam em terhadap .dok. Kalau `line-height`/`font-size` .ident atau row-gap-nya diubah,
+ * ubah rumus ini juga (dijaga `uji-cetak.js` pada ukuran 12/9/6pt).
+ */
+/*
+ * SUDUT LOGO MEMBULAT (permintaan user: "sudut logo di surat dan dasbor tidak tajam, tapi membulat").
+ * Logo unggahan berupa gambar PERSEGI dengan sudut siku; di sini sudutnya dibulatkan **15,6%** —
+ * angka yang SAMA dengan pembulatan ikon aplikasi di layar utama HP (`tools/ikon-dari-logo.js` → IKON
+ * `radius: 15.6`) dan dengan `.logo-img` di topbar (app.css), jadi logo di kop surat, di dasbor, dan
+ * ikon di HP terlihat satu bentuk. Kotak logo di sini persegi (lebar mengikuti tinggi), jadi
+ * persentase = radius lingkaran. Logo bawaan (logo-mark.png) sudah bulat sendiri — tidak berubah.
+ */
+.kop-logo { display: block; flex: 0 0 auto; max-width: 30mm; object-fit: contain; width: auto; border-radius: 15.6%; height: calc((0.94em * 1.2 * 2 + 0.94em * 1.1 * 1.2 + 2 * 1.2mm) * var(--logo-skala, 1)); }
+/*
+ * Pengaturan "Edit Logo & Layout Surat" (menu Setting): pilihan ukuran logo (kecil/sedang/besar)
+ * dikirim dokumen lewat variabel `--logo-skala` pada elemen gambar (views/print.js), dan garis kop
+ * bisa dimatikan (kelas .tanpa-garis). Keduanya hanya menambah opsi — tanpa pengaturan apa pun
+ * tampilannya persis seperti sebelumnya (skala 1).
+ */
+.kop.tanpa-garis { border-bottom: 0; padding-bottom: 0; }
+/*
+ * `.kop-susun` = kop yang keterangannya panjang (laporan per sales): judul dapat LEBAR PENUH dan
+ * keterangan (ident) turun ke barisnya sendiri. Tanpa ini judul 18pt Montserrat butuh ±445pt sedangkan
+ * sisa kolom hanya ±240pt → judulnya terbungkus 3 baris (terukur saat revisi ini dibuat).
+ */
+.kop-susun { flex-wrap: wrap; }
+.kop-susun .ident { flex: 1 1 100%; min-width: 0; margin-top: 1.5mm; }
+.kop-judul { display: flex; flex-direction: column; justify-content: flex-start; text-align: left; min-width: 0; flex: 0 1 auto; }
+/*
+ * Permintaan user: "tulisan surat jalan gunakan Tahoma bold ukuran 18, tulisan sc Sunglasses gunakan
+ * arial no 16 bold" → lalu dikoreksi: **"tulisan sc tidak usah bold perkecil 2pt"** (16 − 2 = **14pt**,
+ * bobot normal). Ukurannya ditulis dalam **pt** (bukan em) supaya TIDAK ikut mengecil saat dokumen
+ * panjang dan skrip menurunkan ukuran dasar `.dok`.
+ * Judul memakai 'TahomaCetak' (font yang disajikan aplikasi, lihat @font-face di atas) supaya
+ * benar-benar Tahoma di semua perangkat — bukan hanya di Windows.
+ */
+/*
+ * JUDUL DOKUMEN — ukuran 16,5pt dipilih dari pengukuran pada dokumen NYATA yang ADA DATANYA:
+ *   - surat jalan                   : kolom kiri 214,5pt → judul 196pt (muat)
+ *   - laporan per sales (ada data)  : kolom kiri **310,2pt** (paling sempit, karena keterangan
+ *     "Periode rekap : 01/10/2026 - 31/10/2026" panjang) → judul 292pt (muat, sisa +-18pt)
+ *   - rekap semua sales             : kolom kiri 429,8pt → judul 233pt (muat)
+ * Dengan 18pt judul laporan = 318,8pt sehingga MASIH membungkus 2 baris di kolom 310,2pt (terukur);
+ * 16,5pt adalah ukuran terbesar yang membuat judul SELALU satu baris di semua dokumen.
+ * `line-height: 1.2` > ink font 0,708em, jadi badan huruf tidak keluar dari barisnya.
+ *
+ * CATATAN PENTING (pernah terjadi): blok komentar ini sempat RUSAK karena dua sesi menyunting berkas
+ * yang sama pada saat bersamaan (penanda komentar bersarang + satu baris teks di luar komentar),
+ * sehingga peramban MEMBUANG aturan .kop h1 di bawahnya - judul jatuh ke h1 bawaan 24pt Liberation Sans.
+ * Kalau menyunting blok ini: jangan menulis penanda komentar di dalam komentar, dan pastikan hanya ada
+ * satu penutup komentar.
+ */
+.kop h1 { margin: 0; font-family: 'MontserratCetak', Montserrat, 'TahomaCetak', Tahoma, Verdana, sans-serif; font-weight: 800; font-size: 18pt; letter-spacing: normal; line-height: 1.2; }
+/* Permintaan user: "Ubah font sc ke font apapun yang tebal" → tulisan perusahaan memakai **Tahoma bold
+   asli** (font yang sama dengan judul, sudah disajikan aplikasi) pada 14pt, jadi terlihat tebal di
+   semua perangkat tanpa bergantung font sistem. */
+/*
+ * Tulisan perusahaan "SC SUNGLASSES STORE" — permintaan user: **"Tulisan sc buat tidak tebal"**
+ * (riwayat: sempat "tidak usah bold" → "ubah ke font apapun yang tebal" → kembali "tidak tebal").
+ * Bobot **400** memakai berkas Tahoma reguler asli (fonts/tahoma-400.woff2), bukan bold buatan browser.
+ * Ukuran tetap 14pt dan Tahoma supaya bentuknya sama dengan judul di atasnya.
+ */
+.kop .sub { font-family: 'TahomaCetak', Tahoma, Verdana, sans-serif; font-weight: 400; font-size: 14pt; line-height: 1.25; margin-top: 0.4mm; }
+/*
+ * Keterangan surat (No. Surat Jalan / Nama / Tanggal) — permintaan user: "tulisan nama, surat jalan dan
+ * tanggal dibuat rata kiri, dan titik dua harus lurus, setelah itu isinya juga lurus rata kiri …
+ * tidak usah bold dan garis bawah, posisinya tetap di pojok kanan atas".
+ * Grid 2 kolom: kolom label lebar TETAP & rata kanan (titik dua lurus), kolom isi rata kiri.
+ * Label ditulis sebagai TEKS biasa (bukan elemen) supaya markup `<div>No. Surat Jalan : <span>…</span></div>`
+ * tetap sama seperti semula; teks itu jadi item grid anonim yang mewarisi `text-align: right` dari selnya.
+ */
+/*
+ * `grid-template-columns: max-content auto` (dulu `27mm auto`): lebar kolom label mengikuti label
+ * TERPANJANG sehingga titik dua tetap lurus, dan labelnya **tidak pernah terpotong/terbungkus ke baris
+ * berikutnya**. Dengan lebar tetap 27mm, "No. Surat Jalan :" di perangkat dengan huruf lebih besar
+ * terpotong sehingga titik duanya turun ke baris sendiri — tampilan nomor surat jalan jadi kacau
+ * (dilaporkan user). `white-space: nowrap` menjaga label tetap satu baris.
+ */
+/*
+ * Lebar kolom label memakai satuan **em** (8.6em) — TIDAK boleh kembali ke lebar tetap (dulu 27mm):
+ * lebar tetap membuat "No. Surat Jalan :" terpotong/terbungkus di perangkat berhuruf lebih besar
+ * sehingga titik duanya turun ke baris sendiri → tampilan nomor surat jalan kacau (dilaporkan user).
+ * Terukur: label terpanjang ("No. Surat Jalan :") = 7,25–7,82em pada ukuran dokumen 6–12pt, jadi 8.6em
+ * selalu cukup dan **kolom label seragam** → titik dua LURUS di ketiga baris.
+ * `white-space: nowrap` menjaga label tetap satu baris; markup tetap
+ * `<div>Label : <span>nilai</span></div>` supaya skrip uji tidak perlu diubah.
+ */
+/*
+ * Tiga kolom: LABEL (rata kiri, selebar label terpanjang "Tanggal") · TITIK DUA · NILAI.
+ * Dengan satu grid begini, "titik dua harus lurus" dan "permulaan teks setelah titik dua lurus" terpenuhi
+ * otomatis: kolom titik dua mulai di x yang sama, dan kolom nilai juga. Permintaan user sebelumnya
+ * memakai kolom label lebar tetap (27mm) yang membuat label panjang terbungkus — jangan dikembalikan.
+ */
+/*
+ * `line-height: 1.2` DITULIS EKSPLISIT (dulu mewarisi "normal" yang nilainya bergantung font mesin:
+ * Liberation Sans di server, Arial di Windows, Roboto di Android). Dengan nilai tetap, tinggi blok ini
+ * sama di semua perangkat sehingga rumus tinggi logo di `.kop-logo` di atas SELALU pas
+ * (permintaan user: "logo … fit tingginya dengan tinggi no, nama dan tgl").
+ */
+.ident { display: grid; grid-template-columns: max-content max-content 1fr; column-gap: 1.4mm; row-gap: 1.2mm;
+  align-items: baseline; font-size: 0.94em; line-height: 1.2; min-width: 62mm; white-space: nowrap; flex: 0 0 auto; }
+.ident .lab { text-align: left; font-weight: 400; }
+.ident .ttk-d { font-weight: 400; }
+.ident .nilai { text-align: left; font-weight: 400; }
+/* Nama sales: juga Tahoma bold — memakai font yang disajikan aplikasi ('TahomaCetak') supaya benar-benar
+   Tahoma di semua perangkat, bukan hanya di Windows. */
+.ident .sales-nm { font-family: 'TahomaCetak', Tahoma, Verdana, sans-serif; font-weight: 700; font-size: 1.1em; }
+
+.tabel-dua { display: flex; gap: 3mm; margin-top: 2mm; }
+.tabel-dua > div { flex: 1; }
+table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.grid th, table.grid td { border: 0.6pt solid #444; padding: 0 0.9mm; line-height: 1.24; }
+/*
+ * KEPALA TABEL = HIJAU SEPERTI HIJAU LOGO (permintaan user: "header kolom tempat no, nama b.t.k.s
+ * berwarna hijau seperti hijaunya logo"). Warnanya TEAL logo (#1a5b69 — diambil dari SVG logo kiriman
+ * user, lihat tools/buat-logo.js) dengan tulisan putih.
+ * `print-color-adjust: exact` WAJIB: tanpa itu Chrome/Edge mencetak warna latar sebagai putih (opsi
+ * "Background graphics" mati) sehingga tulisan putihnya jadi tidak terbaca. Pembuatan PDF dari server
+ * sendiri memakai `printBackground: true` sehingga selalu aman.
+ */
+table.grid thead th {
+  background: #1a5b69;
+  color: #fff;
+  font-size: 0.86em;
+  text-align: center;
+  letter-spacing: 0.2px;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+table.grid td.no, table.grid th.no { width: 8mm; text-align: center; font-size: 0.88em; }
+table.grid td.nm { font-size: 1em; }
+table.grid td.q, table.grid th.q { width: 13mm; text-align: center; font-weight: 700; }
+table.grid td.b, table.grid th.b, table.grid td.k, table.grid th.k, table.grid td.s, table.grid th.s, table.grid td.t, table.grid th.t { width: 9mm; text-align: center; }
+table.grid td.s, table.grid th.s { width: 11mm; }
+/*
+ * BARIS ZEBRA dokumen (permintaan user: "setiap baris berwarna zebra, putih pada baris pertama, baris
+ * kedua abu-abu, baris ketiga putih dst."). `nth-child(even)` = baris ke-2, ke-4, … Karena abu
+ * sebelumnya (#f4f4f4) hampir sama dengan putih sehingga tidak terlihat, sekarang dipakai #e7e7e7
+ * (tetap hemat tinta, tapi jelas terlihat).
+ */
+table.grid tbody tr:nth-child(even) {
+  background: #e7e7e7;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+table.grid.mini th, table.grid.mini td { line-height: 1.28; }
+table.grid .kosong-doc td { text-align: center; font-style: italic; }
+/*
+ * permintaan user: "barang yang selisih dan berwarna merah di rekap barang kembali juga akan berwarna
+ * merah di laporan cetak" → baris yang jumlahnya tidak balance dicetak MERAH & tebal, dan angka Selisih
+ * di kotak rangkuman juga merah kalau tidak nol (lihat views/print.js → adaSelisih()).
+ */
+table.grid tbody tr.baris-selisih td { color: #b91c1c; font-weight: 700; }
+table.rekap td.sel.selisih-ada, table.rekap td.sel.selisih-ada div { color: #b91c1c; }
+table.grid td.selisih-ada { color: #b91c1c; font-weight: 700; }
+
+.kaki { display: flex; gap: 4mm; margin-top: 2.5mm; align-items: flex-start; }
+.kotak-catatan { flex: 1; border: 0.8pt solid #444; padding: 1.4mm; min-height: 16mm; font-size: 1em; }
+/*
+ * permintaan user: "catatan tidak usah kolom" → catatan pada SURAT JALAN & LAPORAN ditulis tanpa
+ * kotak/garing, lalu baris catatan OTOMATIS dicetak di bawahnya bernomor 1, 2, 3 … (lihat views/print.js).
+ * Kelas `.kotak-catatan` tetap dipakai supaya pembagian kolom & skrip uji tidak berubah.
+ */
+.kotak-catatan.tanpa-kotak { border: 0; padding: 0; min-height: 0; }
+.kotak-catatan.tanpa-kotak .catatan-manual { white-space: pre-line; }
+.catatan-otomatis-dok { margin-top: 0.8mm; }
+.catatan-otomatis-dok .baris-otomatis { display: flex; gap: 1.2mm; font-size: 0.94em; line-height: 1.25; }
+.catatan-otomatis-dok .baris-otomatis .no { flex: 0 0 4.5mm; text-align: right; }
+
+/*
+ * SURAT JALAN: daftar barang memenuhi kolom KIRI dulu sampai bawah halaman, sisanya lanjut ke
+ * kolom KANAN (permintaan user). Akumulasi B/T/K/S, catatan, dan tanda tangan tetap di sisi kanan
+ * walau kolom kiri belum penuh. Pembagian barisnya diatur skrip bagiKolomSuratJalan() di print.js.
+ */
+.sj-dua { display: flex; align-items: flex-start; gap: 3mm; margin-top: 2mm; }
+.sj-dua > .sj-kiri, .sj-dua > .sj-kanan { flex: 1 1 0; min-width: 0; }
+.sj-kanan { display: flex; flex-direction: column; gap: 2mm; }
+.sj-kanan .sj-lanjutan.sembunyi { display: none; }
+.sj-kanan .kotak-catatan { flex: 0 0 auto; white-space: pre-line; }
+.sj-kanan .ttd { justify-content: space-between; gap: 2mm; margin-top: 3mm; align-items: flex-start; }
+.sj-kanan .ttd .kolom { flex: 1 1 0; min-width: 0; padding: 0 1mm; }
+.sj-kanan .ttd .garis { width: 100%; }
+table.rekap { border-collapse: collapse; font-size: 1em; }
+table.rekap td { border: 0.7pt solid #444; padding: 0.7mm 1.4mm; }
+table.rekap td.k { width: 6mm; text-align: center; font-weight: 700; background: #d9d9d9; }
+table.rekap td.v { width: 16mm; text-align: center; font-weight: 700; }
+table.rekap td.sel { text-align: center; font-weight: 700; background: #f0f0f0; }
+table.rekap td.sel div { font-size: 1.4em; margin-top: 0.6mm; }
+
+/*
+ * Tanda tangan — permintaan user: "garis di tanda tangan, nama sales dan admin, jabatan, dibuat lurus".
+ * Kedua kolom memakai tinggi jabatan yang SAMA dan teksnya menempel ke BAWAH (flex-end), sehingga garis
+ * dan nama kedua kolom berada di ketinggian yang persis sama walau jabatan kiri dua baris
+ * ("Mengetahui / Admin Gudang,") dan kanan satu baris ("Sales,").
+ */
+.ttd { display: flex; justify-content: space-around; margin-top: 4mm; font-size: 1em; text-align: center; }
+.ttd .jabatan { height: 10mm; display: flex; flex-direction: column; justify-content: flex-end; }
+.ttd .garis { border-top: 0.8pt solid #111; width: 45mm; }
+.ttd .nama { margin-top: 0.9mm; font-weight: 700; font-size: 1.02em; }
+.ttd .kolom { display: flex; flex-direction: column; align-items: center; }
+
+.memo-foot { display: flex; justify-content: space-between; margin-top: 3mm; font-size: 1em; }
+.total-barang { display: flex; gap: 2mm; align-items: flex-end; }
+.total-barang span { border-bottom: 0.8pt solid #111; min-width: 26mm; }
+
+/*
+ * Tulisan "REKAP SELESAI & DIKUNCI …" berwarna MERAH (permintaan user: "Tulisan rekap selesai berwarna
+ * merah") supaya langsung ketahuan bahwa dokumennya sudah final.
+ */
+.info-selesai {
+  margin-top: 2mm;
+  text-align: center;
+  font-size: 0.95em;
+  font-weight: 700;
+  color: #c01818;
+  border: 0.8pt solid #c01818;
+  padding: 1mm;
+}
+
+/* ===== STRUK PRINTER THERMAL (58 / 80 mm) ===== */
+body.struk-lembar { margin: 0; background: #efeaf7; }
+.struk {
+  width: 58mm;
+  margin: 8mm auto;
+  padding: 1mm 1.4mm;
+  background: #fff;
+  color: #000;
+  font-family: ui-monospace, "Courier New", Menlo, monospace;
+  font-size: 8.4pt;
+  line-height: 1.32;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  page-break-after: always;
+}
+.struk:last-child { page-break-after: auto; }
+.struk.lebar80 { width: 80mm; font-size: 8.8pt; }
+.struk .pusat { text-align: center; }
+.struk .tebal { font-weight: 700; }
+.struk .toko { font-size: 10pt; font-weight: 700; letter-spacing: 0.2px; }
+.struk .judul { font-size: 9.4pt; font-weight: 700; margin: 0.8mm 0; }
+.struk .pisah { border-top: 0.5pt dashed #000; margin: 1.1mm 0; }
+.struk .meta div { display: flex; justify-content: space-between; gap: 2mm; }
+.struk .meta span { font-weight: 700; }
+.struk table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.struk table th, .struk table td { padding: 0.35mm 0; text-align: left; vertical-align: top; word-break: break-word; }
+.struk table th { border-bottom: 0.5pt solid #000; font-size: 7.8pt; text-transform: uppercase; }
+.struk table td.no, .struk table th.no { width: 6mm; text-align: left; }
+.struk table td.q, .struk table th.q { width: 9mm; text-align: right; font-weight: 700; }
+.struk table td.nm.tulis { border-bottom: 0.4pt dotted #000; height: 3.6mm; }
+.struk .total { display: flex; justify-content: space-between; font-weight: 700; margin-top: 1mm; }
+.struk .ttd { margin-top: 5mm; display: flex; justify-content: space-between; font-size: 8pt; }
+.struk .ttd .kolom { text-align: center; }
+.struk .ttd .nama { border-top: 0.5pt solid #000; margin-top: 8mm; padding-top: 0.6mm; min-width: 20mm; font-weight: 700; }
+
+/* panel pengaturan struk (tidak ikut tercetak) */
+.struk-baris { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.struk-baris select { width: auto; }
+.struk-status { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 650; padding: 10px 12px; border-radius: 11px; background: rgba(99, 95, 130, 0.08); }
+.struk-status .titik { width: 10px; height: 10px; border-radius: 50%; background: #cbd5e1; flex: 0 0 10px; }
+.struk-status.siap .titik { background: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18); }
+.struk-status.gagal .titik { background: #ef4444; }
+#strukLog { font-family: ui-monospace, Menlo, monospace; font-size: 12px; max-height: 180px; overflow: auto; background: rgba(31, 27, 58, 0.05); border-radius: 11px; padding: 10px 12px; white-space: pre-wrap; }
+
+/* tombol cetak di layar */
+.bar-cetak {
+  position: fixed; top: 12px; right: 12px; z-index: 99; display: flex; gap: 8px;
+  background: rgba(255, 255, 255, 0.92); padding: 8px 10px; border-radius: 12px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+}
+.bar-cetak a, .bar-cetak button {
+  font: inherit; font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 9px; border: 1px solid #cfcbe6;
+  background: #fff; color: #1f1b3a; cursor: pointer; text-decoration: none;
+}
+.bar-cetak button.utama { background: linear-gradient(135deg, #4f46e5, #8b5cf6); color: #fff; border-color: transparent; }
+.bar-cetak button[aria-expanded="true"] { border-color: #4f46e5; color: #4f46e5; }
+
+/*
+ * Panel "panduan setelan dialog cetak" (.panduan-cetak) SUDAH DIHAPUS dari view DAN CSS-nya
+ * (permintaan user: "Semua cetak dokumen laporan digabung ke cetak PDF … halaman cetak HTML lama
+ * beserta panduan kertasnya hapus saja"). Pengguna tidak lagi menyetel kertas di dialog cetak karena
+ * ukuran kertas dokumen sudah pasti (PDF dibuat server). Jangan dihidupkan lagi.
+ */
+
+/* ---------- label barcode / QR ---------- */
+.lembar-label { display: flex; flex-wrap: wrap; padding: 0; gap: 0; }
+.lbl {
+  border: 0.6pt dashed #bbb; overflow: hidden; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; padding: 1.2mm;
+}
+.lbl .bc { width: 100%; }
+.lbl .bc svg { width: 100%; height: auto; max-height: 13mm; }
+/*
+ * QR label. Sebelumnya `width: 100%` saja — di label A4 (64×34 mm) itu membuat QR setinggi ±62 mm
+ * sehingga TERPOTONG oleh `overflow: hidden` dan tidak mungkin dipindai. Sekarang dibatasi tinggi
+ * maksimal (sisanya untuk kode + nama), lebar mengikuti tinggi supaya QR tetap PERSEGI
+ * (`aspect-ratio: 1/1`), dan minimal 14 mm agar modulnya cukup besar untuk kamera.
+ */
+.lbl .qr { display: flex; justify-content: center; width: 100%; }
+.lbl .qr svg {
+  height: 20mm; width: auto; max-width: 100%; aspect-ratio: 1 / 1; display: block;
+}
+.lbl .kd { font-family: ui-monospace, Menlo, monospace; font-size: 7.4pt; font-weight: 700; margin-top: 0.4mm; }
+.lbl .nm { font-size: 7.2pt; line-height: 1.1; max-height: 7.6mm; overflow: hidden; }
+.lbl .hrg { font-size: 7.6pt; font-weight: 800; }
+.lbl .gabung { display: flex; align-items: center; gap: 1.6mm; width: 100%; margin-top: 0.6mm; }
+.lbl .gabung .qr { width: 15mm; flex: 0 0 15mm; }
+.lbl .gabung .qr svg { width: 100%; height: auto; aspect-ratio: 1 / 1; }
+.lbl .teks { flex: 1; min-width: 0; text-align: left; }
+.lbl .teks .nm { text-align: left; max-height: 8mm; }
+
+@media print {
+  body.lembar, body.struk-lembar { background: #fff; }
+  .dok { margin: 0; box-shadow: none; width: auto; min-height: 0; }
+  /* satu struk = satu halaman; tanpa paksa page-break karena app.js menambah elemen #toast di akhir body */
+  .struk { margin: 0; box-shadow: none; width: auto; page-break-after: auto; }
+  #toast { display: none !important; }
+  .bar-cetak, .no-print { display: none !important; }
+}
