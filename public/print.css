@@ -310,7 +310,24 @@ table.grid td.selisih-ada { color: #b91c1c; font-weight: 700; }
 .kotak-catatan.tanpa-kotak .catatan-manual { white-space: pre-line; }
 .catatan-otomatis-dok { margin-top: 0.8mm; }
 .catatan-otomatis-dok .baris-otomatis { display: flex; gap: 1.2mm; font-size: 0.94em; line-height: 1.25; }
-.catatan-otomatis-dok .baris-otomatis .no { flex: 0 0 4.5mm; text-align: right; }
+/*
+ * Nomor baris catatan otomatis dibuat RATA KIRI (dulu rata kanan) supaya "awal nomor" benar-benar segaris
+ * dengan kepala tanggal yang ditulis di atasnya (permintaan user revisi ke-145: "tanggal ... lurus dengan
+ * awal nomer"). Lebar kolomnya tetap 4.5mm, jadi teks catatannya tidak bergeser.
+ */
+.catatan-otomatis-dok .baris-otomatis .no { flex: 0 0 4.5mm; text-align: left; }
+/*
+ * Kepala tanggal catatan otomatis dokumen (revisi ke-145): ditulis di atas nomor, LURUS dengan awal
+ * nomor — kolom nomor di baris memakai lebar tetap 4.5mm + gap 1.2mm, jadi tepi kirinya segaris.
+ */
+.catatan-otomatis-dok .tanggal-otomatis {
+  font-size: 0.94em;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 1mm;
+}
+.catatan-otomatis-dok .tanggal-otomatis:first-child { margin-top: 0; }
+.catatan-otomatis-dok .baris-otomatis .isi-otomatis { min-width: 0; }
 
 /*
  * SURAT JALAN: daftar barang memenuhi kolom KIRI dulu sampai bawah halaman, sisanya lanjut ke

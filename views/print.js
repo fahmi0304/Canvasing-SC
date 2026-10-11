@@ -1,5 +1,5 @@
 'use strict';
-const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, pisahCatatan, namaAdminSesi, urutNama } = require('../lib/util');
+const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, pisahCatatan, namaAdminSesi, urutNama, kelompokCatatan } = require('../lib/util');
 const barcode = require('../lib/barcode');
 const { noSurat } = require('../lib/kode');
 const { semua: setelanSemua, logoDokumen, UKURAN: UKURAN_LOGO } = require('../lib/setelan');
@@ -329,6 +329,13 @@ exports.suratJalan = function ({ sesi, items, base, judul, info, namaAdmin, sete
    * catatan OTOMATIS (pengambilan barang / barang diambil sales lain) dicetak di bawahnya bernomor.
    */
   const catatanDok = pisahCatatan(sesi.catatan);
+  /*
+   * Permintaan user (revisi ke-145): catatan otomatis dokumen dikelompokkan per tanggal — tanggalnya
+   * ditulis di ATAS nomor (lurus dengan awal nomor) dengan format "Kamis, 09 Oktober 2026" dan nomornya
+   * mulai dari 1 lagi di tiap tanggal; tanggal yang hanya punya 1 catatan memakai format awal
+   * (tanggalnya di baris itu sendiri). Struktur blok dari `kelompokCatatan()` (sama dengan layar).
+   */
+  const blokCatatanDok = kelompokCatatan(catatanDok.otomatis);
 
   const isi = `
 <div class="dok sj">
@@ -382,8 +389,14 @@ exports.suratJalan = function ({ sesi, items, base, judul, info, namaAdmin, sete
       </table>
       <div class="kotak-catatan tanpa-kotak"><b>Catatan:</b> <span class="catatan-manual">${esc(catatanDok.manual || '')}</span>${
         catatanDok.otomatis.length
-          ? `<div class="catatan-otomatis-dok">${catatanDok.otomatis
-              .map((b, i) => `<div class="baris-otomatis"><span class="no">${i + 1}.</span> ${esc(b)}</div>`)
+          ? `<div class="catatan-otomatis-dok">${blokCatatanDok
+              .map((blok) => {
+                const kepala = blok.kepala ? `<div class="tanggal-otomatis">${esc(blok.kepala)}</div>` : '';
+                const baris = blok.baris
+                  .map((x) => `<div class="baris-otomatis"><span class="no">${x.no}.</span> <span class="isi-otomatis">${esc(x.teks)}</span></div>`)
+                  .join('');
+                return kepala + baris;
+              })
               .join('')}</div>`
           : ''
       }</div>

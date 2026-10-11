@@ -1,10 +1,10 @@
 'use strict';
-const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, statusInfo, pisahCatatan, urutNama } = require('../lib/util');
+const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, statusInfo, pisahCatatan, urutNama, kelompokCatatan, tanggalLengkap } = require('../lib/util');
 const { opsiCetak } = require('./cetak');
 const { grupAksi } = require('./aksi-ikon');
-const { PLUS, PENSIL, RETUR, REKAP, SELESAI, KUNCI, AUDIT, HAPUS } = require('./ikon');
+const { PLUS, PENSIL, RETUR, REKAP, SELESAI, KUNCI, AUDIT, HAPUS, PRINTER } = require('./ikon');
 const { noSurat } = require('../lib/kode');
-const { VERSI_MEMO } = require('../lib/memoEntri');
+const { VERSI_EKSPEDISI } = require('../lib/rekapEkspedisi');
 
 const PANEL_SCAN = (opsi) => `
 <div class="card scan-card">
@@ -30,16 +30,25 @@ function labelSumber(t) {
   const sumber = String((t && t.sumber) || '').toLowerCase();
   // Pengembalian barang ke gudang (permintaan user): barangnya keluar dari kolom Dibawa.
   if (sumber === 'kembali-gudang') return 'Dikembalikan ke Gudang';
-  if (!sumber || sumber === 'gudang') return 'Gudang';
+  /*
+   * Permintaan user (revisi ke-152, diperbarui revisi ke-157): kalau diambil dari GUDANG, keterangannya
+   * ditulis lengkap — dulu "Diambil dari gudang", sekarang **"Mengambil di gudang"** (permintaan user:
+   * "Keterangan di ambil dari gudang, ubah mengambil di gudang").
+   */
+  if (!sumber || sumber === 'gudang') return 'Mengambil di gudang';
   return t.kode_sumber ? `${t.kode_sumber} · ${t.sumber}` : `Sales ${t.sumber}`;
 }
 
 /**
- * KARTU "EXPEDISI BARANG" (dulu "Catatan Pengambilan Barang") — permintaan user: catatan pengambilan
+ * KARTU "CATATAN PENGAMBILAN BARANG" (pernah sempat diberi judul "Ekspedisi Barang", dikembalikan ke
+ * pengaturan awal atas permintaan user) — permintaan user: catatan pengambilan
  * barang (tgl/pukul · mengambil barang · dari gudang atau sales lain · sebanyak 000 pcs) muncul BESERTA
  * RINCIANNYA di halaman perjalanan DAN Overview, untuk semua status (draft, ongoing, selesai), sebagai
  * daftar TERKUNCI (tidak ada tombol ubah/hapus).
- * Permintaan user terbaru: judulnya diubah menjadi "Ekspedisi Barang" dan keterangan di bawah judul
+ * Permintaan user (revisi ke-150): "tulisan exspedisi barang kembali ke pengaturan awal" → judulnya dikembalikan
+ * ke "Catatan Pengambilan Barang" (sempat diubah menjadi nama lain); tombol cetaknya dipindah ke BAWAH tabel
+ * dengan keterangan "Cetak Memo Pengambilan Lengkap".
+ * Permintaan user: keterangan di bawah judul
  * (bagian yang menjelaskan bahwa catatannya otomatis & terkunci) DIHAPUS — jangan dihidupkan lagi.
  * `tambahan` = daftar entri (tambahan_batch) milik perjalanan ini; `rincian` = Map(batch_id → barang).
  */
@@ -57,42 +66,60 @@ function kartuPengambilan({ base, sesi, tambahan = [], rincian = new Map() }) {
    *    (baris RINCIAN dikembalikan rata kiri karena isinya daftar barang, bukan angka kolom).
    */
   let tanggalTerakhir = '';
+  let noRinci = 0;
   const baris = tambahan
     .map((t) => {
       const barang = rincian.get(t.id) || [];
+      noRinci += 1;
+      const idRinci = `rinci_${noRinci}`;
+      /*
+       * Revisi ke-152 (permintaan user): tulisan "Lihat rincian N jenis barang (N pcs)" DIHAPUS —
+       * rinciannya cukup muncul saat BARISNYA DIKLIK (pola yang sama dengan baris riwayat di halaman
+       * Audit: `data-rinci-baris` + baris rincian `hidden` di bawahnya). Tidak ada tulisan petunjuk
+       * "klik baris untuk melihat rincian" di layar.
+       */
       const rinci =
         barang.length
-          ? `<details class="rinci"><summary>Lihat rincian ${barang.length} jenis barang (${angka(t.total)} pcs)</summary>
-              <ul class="rinci-list">${barang.map((b) => `<li><span class="rinci-nama">${esc(b.nama)}</span><b>× ${angka(b.qty)}</b></li>`).join('')}</ul>
-            </details>`
+          ? `<ul class="rinci-list">${barang.map((b) => `<li><span class="rinci-nama">${esc(b.nama)}</span><b>× ${angka(b.qty)}</b></li>`).join('')}</ul>`
           : '<span class="kode">tidak ada rincian barang</span>';
-      // baris pemisah tanggal — hanya dicetak saat tanggalnya BERBEDA dari entri sebelumnya
+      // baris pemisah tanggal — hanya dicetak saat tanggalnya BERBEDA dari entri sebelumnya.
+      // Format (permintaan user revisi ke-152): HARI, TANGGAL NAMA BULAN TAHUN — mis. "Jumat, 10 Oktober 2026".
       let kepalaTanggal = '';
       if (t.tanggal !== tanggalTerakhir) {
         tanggalTerakhir = t.tanggal;
-        kepalaTanggal = `<tr class="baris-tanggal" data-tanggal-pisah="${esc(t.tanggal)}"><td colspan="5">${esc(tanggalPendek(t.tanggal))}</td></tr>`;
+        kepalaTanggal = `<tr class="baris-tanggal" data-tanggal-pisah="${esc(t.tanggal)}"><td colspan="3">${esc(tanggalLengkap(t.tanggal))}</td></tr>`;
       }
-      return `${kepalaTanggal}<tr data-batch="${t.id}" data-tanggal="${esc(t.tanggal)}" data-jam="${esc(t.jam_mulai)}" data-sumber="${esc(t.sumber || 'gudang')}">
-        <td class="kode">${esc(t.jam_mulai)} WITA</td>
+      return `${kepalaTanggal}<tr data-batch="${t.id}" data-tanggal="${esc(t.tanggal)}" data-jam="${esc(t.jam_mulai)}" data-sumber="${esc(t.sumber || 'gudang')}"
+          class="baris-rinci-klik" data-rinci-baris="${idRinci}" tabindex="0" role="button" aria-expanded="false" aria-controls="${idRinci}">
+        <td class="kode">${esc(t.jam_mulai)}</td>
         <td>${esc(labelSumber(t))}${t.sumber_sesi_id ? ` <small class="kode">(dikurangi ${angka(t.sumber_qty)})</small>` : ''}</td>
         <td class="num">${angka(t.total)}</td>
-        <td><span class="badge b-abu">Terkunci</span></td>
-        <td class="tengah"><a class="btn btn-ghost btn-sm" data-view-memo="${t.id}" target="_blank" rel="noopener" href="${base}/cetak/memo-tambahan/${sesi.id}/${t.id}?tampil=1&v=${VERSI_MEMO}">📄 View Memo</a></td>
       </tr>
-      <tr class="baris-rinci"><td colspan="5">${rinci}</td></tr>`;
+      <tr class="baris-rinci" id="${idRinci}" data-rinci-detail hidden><td colspan="3">${rinci}</td></tr>`;
     })
     .join('');
   return `
 <div class="card pengambilan-card" style="margin-top:22px">
+  <!--
+    Judul kartu & tombol cetaknya mengikuti permintaan user revisi ke-150 (lihat komentar JS di atas
+    fungsi ini). JANGAN menuliskan nama judul LAMA di komentar HTML ini — komentar HTML ikut terkirim ke
+    browser dan skrip uji memeriksa HTML mentah (jebakan #30).
+  -->
   <h2 class="card-title-heading">Ekspedisi Barang</h2>
   ${
     tambahan.length
       ? `<div class="tbl-wrap" style="max-height:420px;overflow:auto">
     <table class="tbl rapat tbl-pekat tbl-tengah" id="tblPengambilan">
-      <thead><tr><th>Jam</th><th>Diambil dari</th><th class="num">Jumlah (pcs)</th><th>Status</th><th class="tengah">View Memo</th></tr></thead>
+      <thead><tr><th>Jam</th><th>Keterangan</th><th class="num">Qty</th></tr></thead>
       <tbody>${baris}</tbody>
-      <tfoot><tr><td colspan="2"><b>Total pengambilan</b></td><td class="num"><b>${angka(total)}</b></td><td colspan="2"></td></tr></tfoot>
+      <tfoot><tr><td colspan="2"><b>Total barang bergerak</b></td><td class="num"><b>${angka(total)}</b></td></tr></tfoot>
     </table>
+  </div>
+  <div class="cetak-memo-baris">
+    <a class="btn btn-ghost cetak-memo-lengkap" href="${base}/cetak/rekap-ekspedisi-pdf/${sesi.id}?v=${VERSI_EKSPEDISI}"
+       target="_blank" rel="noopener" data-pdf-buka
+       title="Cetak memo ekspedisi barang lengkap (PDF) — seluruh penginputan barang perjalanan ini"
+       aria-label="Cetak memo ekspedisi barang lengkap (PDF)">${PRINTER}<span>Cetak Memo Ekspedisi Barang Lengkap</span></a>
   </div>`
       : `<div class="tbl-wrap"><table class="tbl rapat"><tbody><tr><td class="kosong">Belum ada pengambilan barang di perjalanan ini.</td></tr></tbody></table></div>`
   }
@@ -107,7 +134,24 @@ exports.kartuPengambilan = kartuPengambilan;
  */
 function kartuCatatan({ base, sesi }) {
   const { manual, otomatis } = pisahCatatan(sesi.catatan);
+  /*
+   * Permintaan user (revisi ke-145): catatan otomatis dikelompokkan PER TANGGAL — tanggalnya ditulis
+   * **di atas nomor, lurus dengan awal nomor** (format "Kamis, 09 Oktober 2026") dan **nomor mulai dari 1
+   * lagi** di tiap tanggal. Aturan itu hanya untuk tanggal yang punya **≥ 2 catatan**; tanggal dengan
+   * **1 catatan** memakai **format awal** (tanggal ditulis di barisnya sendiri, `dd/mm/yyyy hh:mm …`).
+   * Struktur bloknya dibuat `lib/util.js → kelompokCatatan()` (dipakai juga oleh dokumen F4).
+   */
+  const blokCatatan = kelompokCatatan(otomatis);
   const terkunci = sesi.status === 'selesai';
+  const isiOtomatis = blokCatatan
+    .map((b) => {
+      const kepala = b.kepala ? `<li class="catatan-tanggal"><span class="rinci-kepala">${esc(b.kepala)}</span></li>` : '';
+      const baris = b.baris
+        .map((x) => `<li data-otomatis="1"><span class="rinci-no">${x.no}.</span><span class="rinci-nama">${esc(x.teks)}</span></li>`)
+        .join('');
+      return kepala + baris;
+    })
+    .join('');
   return `
 <div class="card" style="margin-top:22px;max-width:680px">
   <h2 class="card-title">Catatan</h2>
@@ -120,7 +164,7 @@ function kartuCatatan({ base, sesi }) {
     otomatis.length
       ? `<div class="catatan-otomatis">
     <div class="label-otomatis">Catatan otomatis (dibuat sistem — tidak bisa diedit)</div>
-    <ul id="listCatatanOtomatis" class="rinci-list">${otomatis.map((b, i) => `<li data-otomatis="1"><span class="rinci-no">${i + 1}.</span><span class="rinci-nama">${esc(b)}</span></li>`).join('')}</ul>
+    <ul id="listCatatanOtomatis" class="rinci-list">${isiOtomatis}</ul>
   </div>`
       : ''
   }
@@ -252,7 +296,13 @@ function kotakRekap(tot, selisih, { base, sesi, bolehUbah }) {
   const isi = (ket) =>
     `<div class="label">Rekap</div><div class="value">${angka(tot.s)}</div>` +
     `<div class="note">${ket}</div>`;
-  const isiDefault = isi(`K ${angka(tot.k)}${selisih === 0 ? '' : ` · selisih ${angka(selisih)}`}`);
+  /*
+   * Permintaan user (revisi ke-144): "teks k di bawah angka rekap ubah ke pcs" → keterangan kotak Rekap
+   * yang dulu `K 5` sekarang menuliskan **jumlah barang kembali + satuan pcs** (`5 pcs`), dan tetap
+   * menambahkan `· selisih N` kalau ada selisih.
+   */
+  const ketRekap = `${angka(tot.k)} pcs${selisih === 0 ? '' : ` · selisih ${angka(selisih)}`}`;
+  const isiDefault = isi(ketRekap);
   if (!bolehUbah) return `<div class="kotak-info${waspada}">${isiDefault}</div>`;
   if (sesi.status === 'rekap') {
     return `<a class="kotak-info kotak-rekap${waspada}" href="${base}/sesi/${sesi.id}/rekap"
@@ -280,24 +330,25 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
   const ada = items.filter((i) => i.b + i.t + i.k > 0);
 
   /*
-   * Permintaan user: rincian barang tanpa kolom NO & Kode, dan tanpa keterangan di atas tabel.
+   * Permintaan user (revisi ke-144) — halaman lanjutan surat jalan terbit:
+   *  - "kolom k ... tidak usah" → kolom **K DIHAPUS** dari tabel rincian (kolom K baru berisi setelah
+   *    rekap; info barang kembali tetap ada di kotak **Rekap** di atas tabel);
+   *  - "kolom s ganti total, b,t, total, rata tengah" → kolom **S diganti label Total** dan kolom
+   *    B · T · Total **rata tengah** (kelas `num tengah`, sama seperti halaman Overview).
    *
-   * Permintaan user (keluhan "setelah rekap kolom S yang kosong kolomnya jadi full hitam, bukan lagi
-   * nol"): kolom **S selalu ditulis angkanya** — barang yang setorannya 0 (semua bawaannya kembali)
-   * ditulis "0", bukan sel KOSONG. Sebelumnya selnya dibiarkan kosong (`${s || ''}`), sehingga setelah
-   * rekap separuh kolom S tampak kosong/gelap. Aturan yang sama sudah dipakai dokumen cetak
-   * (`views/print.js → barisBTKS`) dan halaman Overview, jadi sekarang layar & kertas sama.
-   * Kolom B & T tetap dikosongkan saat 0 (sama seperti kertas).
+   * Permintaan user sebelumnya yang TETAP berlaku: rincian tanpa kolom NO & Kode, tanpa keterangan di atas
+   * tabel, dan **kolom Total selalu ditulis angkanya** (0 saat semua bawaan kembali) — barang yang
+   * setorannya 0 ditulis "0", bukan sel kosong (keluhan "setelah rekap kolom S yang kosong kolomnya jadi
+   * full hitam"). Kolom B & T tetap dikosongkan saat 0 (sama seperti kertas).
    */
   const baris = ada
     .map((i) => {
       const s = setoranEfektif(i);
       return `<tr data-kode="${esc(i.kode)}">
         <td>${esc(i.nama)}</td>
-        <td class="num">${i.b || ''}</td>
-        <td class="num">${i.t || ''}</td>
-        <td class="num">${i.k || ''}</td>
-        <td class="num">${angka(s)}</td>
+        <td class="num tengah">${i.b || ''}</td>
+        <td class="num tengah">${i.t || ''}</td>
+        <td class="num tengah">${angka(s)}</td>
       </tr>`;
     })
     .join('');
@@ -368,7 +419,7 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
    *  - barcode barang → PDF label (kertas gulungan 58 mm, QR).
    * Permintaan user terbaru: "cetak memo di logo print tidak usah" → opsi **PDF Memo Pengambilan
    * DIHAPUS dari menu logo printer** di halaman ini (dan halaman rekap). Memonya tetap bisa dilihat
-   * per penginputan lewat kolom **View Memo** di kartu "Ekspedisi Barang" serta dari menu baris
+   * per penginputan lewat kolom **Memo** di kartu "Catatan Pengambilan Barang" serta dari menu baris
    * halaman Laporan — jadi tidak ada fungsi yang hilang. Jangan dihidupkan lagi di menu cetak.
    */
   if (sesi.status !== 'draft')
@@ -441,8 +492,8 @@ ${bolehUbah ? '' : '<div class="alert alert-info">Peran kamu hanya melihat data 
 <div class="card" style="margin-top:22px">
   <div class="tbl-wrap" style="max-height:520px;overflow:auto">
     <table class="tbl rapat tbl-pekat">
-      <thead><tr><th>Nama Barang</th><th class="num">B</th><th class="num">T</th><th class="num">K</th><th class="num">S</th></tr></thead>
-      <tbody>${baris || '<tr><td colspan="5" class="kosong">Belum ada jumlah yang diinput.</td></tr>'}</tbody>
+      <thead><tr><th>Nama Barang</th><th class="num tengah">B</th><th class="num tengah">T</th><th class="num tengah">Total</th></tr></thead>
+      <tbody>${baris || '<tr><td colspan="4" class="kosong">Belum ada jumlah yang diinput.</td></tr>'}</tbody>
     </table>
   </div>
 </div>

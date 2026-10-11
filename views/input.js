@@ -85,6 +85,50 @@ exports.kepalaEntri = kepalaEntri;
  * penginputan baru), sedangkan jumlah penginputan sebelumnya ditampilkan di kolom "Sbl" di
  * sampingnya (permintaan user). `entri` = { kini, batch, daftar, nilai, sebelum, nomor }.
  */
+/**
+ * POPUP "SELESAI — KUNCI & SIMPAN" DI HALAMAN BARANG TAMBAHAN (permintaan user revisi ke-156).
+ *
+ * Permintaan user: "Pindah tombol simpan dan koreksi di kanan, dan ubah namanya ke selesai, dan fungsinya
+ * berubah, tidak langsung mengunci imputan, hanya menampilkan pop up, tombol kunci dan simpan berada di
+ * pop up, jadi yang tampil di pop up masih bisa di ubah".
+ *
+ * Jadi tombol kanan berlabel **Selesai** dan TIDAK mengirim formulir (`type="button"`) — ia hanya membuka
+ * popup ini (penginputan BELUM dibuat/dikunci). Isi popup: daftar barang yang akan ditambahkan dengan
+ * kolom **JUMLAH yang masih bisa diubah** + baris Total, dan tombol **Kunci & Simpan** yang baru MENGIRIM
+ * nilainya ke server (`_aksi=kunci`; kolomnya `kunci_<itemId>`) lalu mengunci penginputan & kembali ke
+ * halaman perjalanan. Popup bisa ditutup ("Kembali ubah" / klik latar / Esc) tanpa mengubah apa pun.
+ *
+ * Isinya dibangun di browser dari nilai yang sedang terisi (`public/app.js → pasangPopupKunci`), jadi
+ * markup ini hanya kerangka kosong.
+ */
+function popupKunci({ base, sesi }) {
+  return `
+<div class="konfirmasi-lapis" id="popupKunci" hidden>
+  <div class="konfirmasi-kotak card popup-baru popup-kunci" role="dialog" aria-modal="true" aria-labelledby="popupKunciJudul">
+    <div class="popup-kunci-kepala">
+      <h2 id="popupKunciJudul">Selesai — Kunci &amp; Simpan</h2>
+      <button class="popup-kunci-tutup" type="button" data-popup-tutup aria-label="Tutup popup">&times;</button>
+    </div>
+    <p class="card-hint">Angka di bawah <b>masih bisa diubah</b>. Kalau sudah benar tekan <b>Kunci &amp; Simpan</b> — penginputan ini akan tersimpan &amp; terkunci.</p>
+    <form method="post" action="${base}/sesi/${sesi.id}/tambahan" id="formKunci">
+      <input type="hidden" name="_aksi" value="kunci">
+      <input type="hidden" name="sumber" id="sumberKunci" value="gudang">
+      <div class="tbl-wrap">
+        <table class="tbl rapat tbl-pekat" id="tblBarangBaru">
+          <thead><tr><th class="num-no">NO</th><th>NAMA BARANG</th><th class="num-jml num">JUMLAH</th></tr></thead>
+          <tbody id="bodyKunci"></tbody>
+          <tfoot><tr><td colspan="2"><b>Total</b></td><td class="num-jml num"><b id="totalKunci">0</b></td></tr></tfoot>
+        </table>
+      </div>
+      <div class="konfirmasi-aksi">
+        <button class="btn btn-ghost" type="button" data-popup-tutup>Kembali ubah</button>
+        <button class="btn btn-primary" type="submit" data-popup-kunci>Kunci &amp; Simpan</button>
+      </div>
+    </form>
+  </div>
+</div>`;
+}
+
 exports.render = function ({ sesi, items, base, tahap, pesan, entri = null, daftarSumber = [], petugas = '' }) {
   const ambil = tahap === 'ambil';
   const kolom = ambil ? 'b' : 't';
@@ -540,7 +584,10 @@ exports.render = function ({ sesi, items, base, tahap, pesan, entri = null, daft
    * halaman, pindah ke halaman lain dan simpan hasil imput".
    * Mekanismenya dipusatkan di public/app.js (SC.geserHalaman) supaya kelima halaman itu berperilaku
    * persis sama; di sini hanya didaftarkan: tujuannya halaman perjalanan, dan "simpan" = kirim form ini
-   * dengan nilai _aksi=simpan (sama dengan tombol Simpan).
+   * dengan nilai _aksi yang sama dengan tombol simpan halaman ini — layar "barang dibawa" memakai
+   * _aksi=simpan (menyimpan jumlah dibawa lalu masuk perjalanan), sedangkan layar TAMBAHAN memakai
+   * _aksi=kunci (jalur yang sama dengan tombol "Kunci & Simpan" di popup "Selesai": penginputannya
+   * dibuat, dikunci, lalu kembali ke halaman perjalanan).
    */
   if (window.SC && typeof window.SC.geserHalaman === 'function') {
     window.SC.geserHalaman({
@@ -550,11 +597,11 @@ exports.render = function ({ sesi, items, base, tahap, pesan, entri = null, daft
         if (!form) return;
         pillSimpanStatus();
         // hidden input disuntikkan sesaat: form yang sama sudah punya tombol ber-name "_aksi", dan
-        // mengirim DUA nilai "_aksi" membuat pilihan "simpan" di server gagal (req.body._aksi jadi array)
+        // mengirim DUA nilai "_aksi" membuat pilihan aksi di server gagal (req.body._aksi jadi array)
         const inp = document.createElement('input');
         inp.type = 'hidden';
         inp.name = '_aksi';
-        inp.value = 'simpan';
+        inp.value = '${ambil ? 'simpan' : 'kunci'}';
         form.appendChild(inp);
         if (typeof form.requestSubmit === 'function') form.requestSubmit();
         else form.submit();
@@ -793,9 +840,22 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
         ? '<div class="status-simpan" id="statusSimpan" hidden aria-live="polite"></div>'
         : ''
     }
-    <div class="aksi-row aksi-dua" style="margin-top:${ambil ? '18px' : '10px'}">
-      <button class="btn btn-primary btn-lg" type="submit" name="_aksi" value="simpan">Simpan${ambil ? ' &amp; Buka Perjalanan' : ' &amp; Kunci'}</button>
-      <button class="btn btn-ghost btn-lg" type="submit" name="_aksi" value="tetap">Simpan &amp; Tetap di Sini</button>
+    <div class="aksi-row aksi-dua${ambil ? '' : ' aksi-satu'}" style="margin-top:${ambil ? '18px' : '10px'}">
+      ${
+        ambil
+          ? `<button class="btn btn-primary btn-lg" type="submit" name="_aksi" value="simpan">Simpan &amp; Buka Perjalanan</button>
+      <button class="btn btn-ghost btn-lg" type="submit" name="_aksi" value="tetap">Simpan &amp; Tetap di Sini</button>`
+          : /* Layar TAMBAHAN (permintaan user revisi ke-158): tombol **"Simpan &amp; Tetap di Sini"
+               DIHAPUS** — di halaman ini hanya ada satu tombol, **"Selesai"** (`type="button"`, jadi tidak
+               mengirim formulir) yang membuka popup Kunci &amp; Simpan. Jalur simpan &amp; mengunci
+               ada di dalam popup itu (`Kunci &amp; Simpan`) dan lewat geser-ke-kanan "Pindah &amp; simpan
+               hasil input". Menyimpan lalu tetap di halaman ini juga masih dikerjakan server kalau ada
+               kiriman tanpa `_aksi=kunci` (lihat `POST /sesi/:id/tambahan`), tetapi tidak ada lagi
+               tombolnya di layar.
+               Kelas `aksi-satu` = satu tombol: di layar lebar lebarnya secukupnya & tetap di KANAN,
+               di HP melebar penuh (lihat app.css). */
+            `<button class="btn btn-primary btn-lg" type="button" id="btnSelesai" aria-haspopup="dialog" aria-expanded="false" aria-controls="popupKunci">Selesai</button>`
+      }
     </div>
   </div>
 
@@ -815,7 +875,8 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
   </div>
 </div>
 </form>
-${ambil ? '' : kepalaEntri({ base, sesi, entri, daftarSumber, petugas })}`;
+${ambil ? '' : kepalaEntri({ base, sesi, entri, daftarSumber, petugas })}
+${ambil ? '' : popupKunci({ base, sesi })}`;
 
   return { isi, script };
 };

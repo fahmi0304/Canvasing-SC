@@ -334,7 +334,7 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
             /*
              * permintaan user terbaru: "cetak memo di logo print tidak usah" → opsi PDF Memo Pengambilan
              * DIHAPUS dari menu logo printer (halaman perjalanan & halaman rekap ini). Memonya tetap ada
-             * di kolom View Memo kartu "Ekspedisi Barang" dan di menu baris halaman Laporan.
+             * di kolom Memo kartu "Catatan Pengambilan Barang" dan di menu baris halaman Laporan.
              */
             { href: `/cetak/label-pdf?sesi=${sesi.id}`, label: 'PDF Barcode Barang', ket: 'terbuka di penampil PDF · label QR gulungan 58 mm' },
           ],

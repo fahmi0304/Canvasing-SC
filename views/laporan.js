@@ -2,7 +2,7 @@
 const { esc, angka, tanggalPendek, tanggalPanjang } = require('../lib/util');
 const { badge } = require('./layout');
 const { ikonPdf } = require('./cetak');
-const { menuBaris, attrBarisKlik } = require('./menu-baris');
+const { menuBaris, attrBarisKlik, opsiUndo } = require('./menu-baris');
 const { FILTER, KALENDER, ORANG, LAPORAN } = require('./ikon');
 const { noSurat } = require('../lib/kode');
 const { kartuGrafik } = require('./grafik');
@@ -150,7 +150,14 @@ exports.hub = function ({ base, pesan, daftar, jumlahBarang, jumlahSales, daftar
           ? []
           : [{ href: `${base}/cetak/memo-pdf/${s.id}`, target: true, attr: 'data-pdf-buka', ikon: '🖨', label: 'PDF Memo Pengambilan', ket: 'terbuka di penampil PDF · struk thermal 58 mm' }]),
       ];
+      /*
+       * UNDO untuk administrator (permintaan user: "Administrator bisa meng undo surat jalan") — satu
+       * langkah: Selesai → Sedang Rekap, Sedang Rekap → Ongoing, Ongoing → Draft. Ditempatkan SEBELUM
+       * "Hapus laporan" supaya opsi yang tidak merusak data muncul lebih dulu.
+       */
       if (bolehHapus) {
+        const undo = opsiUndo(s, base, '/laporan');
+        if (undo) opsiBaris.push(undo);
         opsiBaris.push({
           form: `${base}/sesi/${s.id}/hapus`,
           kelas: 'ttk-hapus',

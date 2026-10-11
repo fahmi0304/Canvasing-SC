@@ -5,18 +5,26 @@ const { GARIS, PRINTER } = require('./ikon');
 
 /** Ikon tambah (plus) & edit (pensil) untuk tombol kepala halaman. */
 const PLUS = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" class="ikon-kepala"><path d="M12 5v14M5 12h14"/></svg>`;
+/** Ikon rekap stok (tabel dengan centang) untuk tombol kepala halaman Inventory. */
+const IKON_STOK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18M9 9v11"/><path d="M12.5 13.4l1.6 1.6 3-3"/></svg>`;
+
 /**
  * Tombol kepala halaman Inventory (permintaan user):
  * Tambah Barang (dua pilihan: impor Excel / satu-satu), Cetak (barcode & printer), Edit barang keseluruhan.
+ * Permintaan user (revisi ke-160): aksi **Rekap Stok dipindah KE DALAM ikon garis tiga** (bukan lagi
+ * tombol sendiri di baris kepala) — jadi isi menu itu: Rekap Stok · Impor dari Excel · Tambah Barang
+ * (satu-satu) · Edit Barang (keseluruhan) · Tampilkan/sembunyikan barang diarsip.
  */
 function tombolKepala({ base, tampilArsip = false, jumlahArsip = 0 }) {
   return `<div class="inv-alat">
   <div class="ttk" data-ttk>
-    <button class="ttk-tombol" type="button" data-ttk-buka aria-haspopup="true" aria-expanded="false" aria-label="Tambah, edit, &amp; arsip barang">
+    <button class="ttk-tombol" type="button" data-ttk-buka aria-haspopup="true" aria-expanded="false" aria-label="Barang: rekap stok, tambah, edit, &amp; arsip">
       ${GARIS}
     </button>
     <div class="ttk-menu" data-ttk-menu role="menu">
-      <div class="ttk-kepala">Tambah &amp; Edit Barang</div>
+      <div class="ttk-kepala">Barang</div>
+      <a role="menuitem" href="${base}/rekap-stok"><span class="ttk-ikon">${IKON_STOK}</span><span>Rekap Stok<small>pilih barang — stok tiap sales, fisik, Kledo, selisih</small></span></a>
       <a role="menuitem" href="${base}/impor"><span class="ttk-ikon">▤</span><span>Impor dari Excel<small>unggah .xlsx/.csv daftar barang</small></span></a>
       <a role="menuitem" href="${base}/barang/baru"><span class="ttk-ikon">＋</span><span>Tambah Barang (satu-satu)<small>isi nama, kode SKU dibuat otomatis</small></span></a>
       <a role="menuitem" href="${base}/barang/edit"><span class="ttk-ikon">✎</span><span>Edit Barang (keseluruhan)<small>ganti nama, susun kode, atau hapus barang</small></span></a>
@@ -48,6 +56,16 @@ function tombolArsip({ base, tampilArsip, jumlahArsip }) {
   return tampilArsip
     ? `<a role="menuitem" class="ttk-arsip aktif" href="${base}/barang"><span class="ttk-ikon">🗄</span><span>Sembunyikan barang diarsip<small>kembali ke daftar barang aktif</small></span></a>`
     : `<a role="menuitem" class="ttk-arsip" href="${base}/barang?arsip=1"><span class="ttk-ikon">🗄</span><span>Tampilkan barang diarsip (${angka(jumlahArsip)})<small>barang yang sudah ada transaksi</small></span></a>`;
+}
+
+/**
+ * NAMA BARANG = TAUTAN ke REKAP STOK (permintaan user): mengklik nama barang membuka lembar Rekap Stok
+ * (semua barang jadi baris) yang menyorot baris barang itu — waktu user melihat bentuk tabelnya, ia
+ * minta "kolom yang pertama nama barang … stok di sales … stok fisik, stok di aplikasi kledo, terakhir
+ * selisih", jadi tabel itulah yang ditampilkan (bukan popup per barang).
+ */
+function tombolNamaBarang(p, base) {
+  return `<a class="barang-pilih" href="${base}/rekap-stok?barang=${Number(p.id)}" title="Lihat rekap stok &amp; isi hitungan fisik"><b>${esc(p.nama)}</b></a>`;
 }
 
 exports.daftar = function ({ daftar, cari, base, pesan, jumlahSemua, bolehUbah = true, tampilArsip = false, jumlahArsip = 0, dipakai = [] }) {
@@ -94,7 +112,7 @@ exports.daftar = function ({ daftar, cari, base, pesan, jumlahSemua, bolehUbah =
         }
         return `<tr data-kode="${esc(p.kode)}" data-nama="${esc(String(p.nama).toLowerCase())}" data-cari="${esc((p.kode + ' ' + p.nama).toLowerCase())}"${arsip ? ' class="baris-arsip"' : ''}>
         <td class="kode">${esc(p.kode)}</td>
-        <td><b>${esc(p.nama)}</b>${arsip ? ' <span class="badge b-abu">diarsip</span>' : ''}${p.aktif ? '' : ' <span class="badge b-kuning">tidak ikut canvasing</span>'}</td>
+        <td>${tombolNamaBarang(p, base)}${arsip ? ' <span class="badge b-abu">diarsip</span>' : ''}${p.aktif ? '' : ' <span class="badge b-kuning">tidak ikut canvasing</span>'}</td>
         <td class="aksi-sel">${menuBaris({ judul: esc(p.kode) + ' · ' + esc(p.nama), opsi })}</td>
       </tr>`;
       }
@@ -122,6 +140,8 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
       ada di public/app.js. Atribut aria-pressed menyatakan keadaannya; klik lagi = kembali ke urutan asli.
     -->
     <button class="btn btn-ghost btn-sm urut-az" type="button" data-urut-az data-urut="#tblBarang" aria-pressed="false" title="Urutkan nama barang A–Z">Urut A–Z</button>
+    <!-- petunjuk singkat: nama barang bisa diklik untuk melihat berapa yang masih dibawa sales (revisi ke-159) -->
+    <span class="hint hint-pilih">Klik nama barang untuk membuka <b>Rekap Stok</b> (stok tiap sales, stok fisik, stok Kledo, selisih).</span>
   </div>
   <div class="tbl-wrap" style="max-height:62vh;overflow:auto">
     <table class="tbl tbl-pekat" id="tblBarang">

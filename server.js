@@ -16,7 +16,7 @@ const { q } = require('./lib/db');
 const {
   esc, rp, angka, tanggalPanjang, tanggalPendek, hariIni, jamSekarang, jamPenanda, sekarang,
   setoranEfektif, susunCatatan, pisahCatatan, barisPengambilan, barisDiambil, barisPengembalian,
-  namaAdminSesi,
+  namaAdminSesi, urutNama,
 } = require('./lib/util');
 const barcode = require('./lib/barcode');
 const { layout, badge } = require('./views/layout');
@@ -37,6 +37,9 @@ const vPrint = require('./views/print');
 const vMemo = require('./views/memo');
 const { memoEntri } = require('./lib/memoEntri');
 const pdfF4 = require('./lib/pdfF4');
+const rekapEkspedisi = require('./lib/rekapEkspedisi').rekapEkspedisi;
+const { rekapStokPdf, VERSI_STOK } = require('./lib/rekapStok');
+const vRekapStok = require('./views/rekap-stok');
 const { kodeBaru, noSurat } = require('./lib/kode');
 const vSales = require('./views/sales');
 const vSetting = require('./views/setting-logo');
@@ -399,6 +402,108 @@ app.post('/sales/tambah', (req, res) => {
   const nama = String(req.body.nama || '').trim();
   if (nama) q.salesTambah(nama);
   balik(req, res, '/sales', 'Nama sales ditambahkan');
+});
+
+/*
+ * ---------- BIODATA & FOTO SALES (permintaan user) ----------
+ * "di setting nama sales ada selain opsi hapus, berikan opsi edit, dan bisa mengisi biodata sales beserta
+ *  fotonya".
+ *
+ * Fotonya diunggah dari sisi SERVER ke penyimpanan media platform (fungsi `unggahKeMedia`, sama seperti
+ * logo aplikasi) — yang disimpan di database hanya URL-nya. Kalau foto gagal diunggah (mis. kuota
+ * penyimpanan penuh), pesan dari penyimpanan media diteruskan apa adanya dan **biodatanya tetap
+ * tersimpan** supaya isian pengguna tidak hilang.
+ */
+const EKSTENSI_FOTO = ['jpg', 'jpeg', 'png', 'webp'];
+const TIPE_FOTO = ['image/jpeg', 'image/png', 'image/webp'];
+const BATAS_FOTO = 5 * 1024 * 1024;
+
+app.get('/sales/:id', (req, res) => {
+  if (!hanyaAdmin(req, res, '/', 'Hanya administrator yang boleh mengubah biodata sales')) return;
+  const sales = q.salesById(req.params.id);
+  if (!sales) return balik(req, res, '/sales', 'Nama sales tidak ditemukan');
+  res.send(
+    H(req, {
+      judul: 'Edit Sales',
+      aktif: '/sales',
+      base: req.BASE,
+      isi: vSales.form({ sales, base: req.BASE, pesan: req.query.pesan, galat: req.query.galat }),
+    })
+  );
+});
+
+app.post('/sales/:id/simpan', upload.single('foto'), async (req, res) => {
+  if (!hanyaAdmin(req, res, '/', 'Hanya administrator yang boleh mengubah biodata sales')) return;
+  const sales = q.salesById(req.params.id);
+  if (!sales) return balik(req, res, '/sales', 'Nama sales tidak ditemukan');
+  const b = req.body || {};
+  const nama = String(b.nama || '').trim() || sales.nama;
+  const lama = { nama: sales.nama, alamat: sales.alamat || '', telepon: sales.telepon || '', email: sales.email || '', catatan: sales.catatan || '' };
+  const baru = {
+    nama,
+    alamat: String(b.alamat || '').trim(),
+    telepon: String(b.telepon || '').trim(),
+    email: String(b.email || '').trim(),
+    catatan: String(b.catatan || '').trim(),
+  };
+  /*
+   * Nama harus unik (kolom `nama` UNIQUE). Kalau diisi nama sales lain, tolak dengan pesan yang jelas
+   * alih-alih membiarkan SQLite melempar galat constraint.
+   */
+  const bentrok = q.salesByNama(nama);
+  if (bentrok && Number(bentrok.id) !== Number(sales.id)) {
+    return balik(req, res, `/sales/${sales.id}`, `Nama "${nama}" sudah dipakai sales lain`);
+  }
+
+  let pesanFoto = '';
+  let fotoBaru = null;
+  const f = req.file;
+  if (f && f.buffer && f.buffer.length) {
+    try {
+      if (f.size > BATAS_FOTO) throw new Error('ukuran foto maksimal 5 MB');
+      const namaAsli = String(f.originalname || 'foto.jpg');
+      const ext = ((namaAsli.match(/\.([A-Za-z0-9]+)$/) || [])[1] || '').toLowerCase();
+      const extOk = EKSTENSI_FOTO.includes(ext);
+      const tipeOk = TIPE_FOTO.includes(String(f.mimetype || '').toLowerCase());
+      if (!extOk && !tipeOk) throw new Error('foto harus berformat JPG, PNG, atau WEBP');
+      const namaBerkas = `sales-${sales.id}-${Date.now()}.${extOk ? ext : 'jpg'}`;
+      fotoBaru = await unggahKeMedia(f.buffer, namaBerkas);
+      pesanFoto = ' — foto diperbarui';
+    } catch (e) {
+      console.error('[galat] unggah foto sales:', e && e.message);
+      q.salesUbah(sales.id, baru);   // biodata tetap disimpan walau fotonya gagal
+      return balik(req, res, `/sales/${sales.id}`, `Biodata tersimpan, tetapi foto gagal diunggah: ${(e && e.message) || 'kesalahan'}`);
+    }
+  } else if (String(b.hapus_foto || '') === '1') {
+    fotoBaru = '';
+    pesanFoto = ' — foto dihapus';
+  }
+
+  q.salesUbah(sales.id, fotoBaru === null ? baru : { ...baru, foto: fotoBaru });
+  /*
+   * Kalau NAMANYA diubah, nama itu juga dipakai di perjalanan (surat jalan, laporan, grafik). Semua
+   * perjalanan yang memakai nama lama ikut diganti supaya tidak ada dua nama berbeda untuk orang yang sama.
+   */
+  let pesanNama = '';
+  if (nama !== sales.nama) {
+    q.salesGantiNamaDiSesi(sales.nama, nama);
+    pesanNama = ` — nama pada ${q.salesJumlahSesi(nama)} perjalanan ikut diperbarui`;
+  }
+  const beda = Object.keys(baru)
+    .filter((k) => baru[k] !== lama[k])
+    .map((k) => ({ nama, kolom: k, sebelum: lama[k], sesudah: baru[k] }));
+  if (fotoBaru !== null) beda.push({ nama, kolom: 'foto', sebelum: sales.foto || '(belum ada)', sesudah: fotoBaru || '(dihapus)' });
+  if (beda.length) audit(req, 'sales-diubah', 'sales', sales.id, `Biodata sales ${nama} diperbarui (${beda.map((d) => d.kolom).join(', ')})`, beda);
+  balik(req, res, `/sales/${sales.id}`, 'Biodata sales tersimpan' + pesanFoto + pesanNama);
+});
+
+app.post('/sales/:id/foto/hapus', (req, res) => {
+  if (!hanyaAdmin(req, res, '/', 'Hanya administrator yang boleh mengubah foto sales')) return;
+  const sales = q.salesById(req.params.id);
+  if (!sales) return balik(req, res, '/sales', 'Nama sales tidak ditemukan');
+  q.salesUbah(sales.id, { nama: sales.nama, alamat: sales.alamat, telepon: sales.telepon, email: sales.email, catatan: sales.catatan, foto: '' });
+  audit(req, 'sales-foto-dihapus', 'sales', sales.id, `Foto sales ${sales.nama} dihapus`, [{ nama: sales.nama, kolom: 'foto', sebelum: sales.foto || '', sesudah: '(dihapus)' }]);
+  balik(req, res, `/sales/${sales.id}`, 'Foto sales dihapus');
 });
 
 app.post('/sales/:id/hapus', (req, res) => {
@@ -903,6 +1008,42 @@ app.post('/sesi/:id/hapus', (req, res) => {
   balik(req, res, balikKe, `Surat jalan ${noSurat(sesi)} dihapus`);
 });
 
+/*
+ * UNDO SATU LANGKAH STATUS SURAT JALAN — administrator saja (permintaan user: "Administrator bisa meng
+ * undo surat jalan", dengan pilihan user: **satu langkah** — selesai → rekap, rekap → kirim,
+ * kirim → draft — angka **B/T/K/S tidak diubah**, dan surat jalan berikutnya yang tadi dibuat saat
+ * mengunci rekap **dibiarkan**).
+ *
+ * Kenapa dipakai: petugas salah menekan "Kunci", "Mulai Rekap", atau "Selesai" sehingga Surat Jalan
+ * sudah terkunci padahal datanya belum benar. Undo membuka kuncinya lagi sehingga bagian yang salah bisa
+ * diperbaiki lewat alur normal (kolom B bisa diubah lagi saat draft, T saat kirim, K & S saat rekap).
+ *
+ * Yang terjadi: hanya kolom `status` yang turun satu langkah + cap waktu langkah yang dibatalkan
+ * dikosongkan (`selesai_at`/`rekap_at`/`dikunci_at`) supaya tanggal acuan laporan tidak memakai tanggal
+ * lama yang sudah dibatalkan. Angka B/T/K/S dan seluruh entri penginputan/memo tetap utuh.
+ */
+const UNDO_TURUN = { selesai: 'rekap', rekap: 'kirim', kirim: 'draft' };
+const UNDO_HAPUS_WAKTU = { selesai: 'selesai_at', rekap: 'rekap_at', kirim: 'dikunci_at' };
+app.post('/sesi/:id/undo', (req, res) => {
+  // form bisa mengirim `balik` supaya setelah undo tetap di halaman asal (mis. /laporan)
+  const balikKe = String(req.body.balik || '') === '/laporan' ? '/laporan' : '/';
+  const sesi = q.sesiById(Number(req.params.id));
+  if (!sesi) return balik(req, res, balikKe, 'Perjalanan tidak ditemukan');
+  if (!hanyaAdmin(req, res, `/sesi/${sesi.id}`, 'Hanya administrator yang boleh meng-undo surat jalan')) return;
+  const turun = UNDO_TURUN[sesi.status];
+  if (!turun) {
+    return balik(req, res, balikKe, `Surat jalan ${noSurat(sesi)} masih draft — belum ada yang perlu di-undo`);
+  }
+  const label = { draft: 'Draft', kirim: 'Ongoing (surat jalan terbit)', rekap: 'Sedang Rekap', selesai: 'Selesai' };
+  const sebelum = label[sesi.status] || sesi.status;
+  const sesudah = label[turun] || turun;
+  q.sesiUndoStatus(sesi.id, turun, UNDO_HAPUS_WAKTU[sesi.status]);
+  audit(req, 'jalan-diundo', 'sesi', sesi.id,
+    `Surat jalan ${noSurat(sesi)} di-undo: ${sebelum} → ${sesudah} (angka B/T/K/S tidak diubah, administrator)`,
+    [{ kolom: 'Status', sebelum, sesudah }]);
+  balik(req, res, balikKe, `Surat jalan ${noSurat(sesi)} dibuka: ${sebelum} → ${sesudah}. Datanya masih utuh — silakan perbaiki lewat alur normal.`);
+});
+
 /**
  * Daftar id baris yang ditandai "tidak dibawa" (`_buang` dari views/input.js — diisi saat
  * user menggeser baris / klik 🗑 lalu menyetujui popup konfirmasi).
@@ -1076,6 +1217,11 @@ app.get('/sesi/:id/tambahan', (req, res) => {
         String(x.sales_nama || '').trim().toLowerCase() !== String(sesi.sales_nama || '').trim().toLowerCase()
     )
     .map((x) => ({ id: x.id, kode: noSurat(x), sales: x.sales_nama || '-', tanggal: x.tanggal, status: x.status, b: x.tot_b || 0 }));
+  /*
+   * Sejak revisi ke-156 popup "Selesai — Kunci & Simpan" dibangun di BROWSER sebelum penginputan
+   * dikirim (jadi angka di dalamnya masih bisa diubah), sehingga halaman ini tidak lagi membutuhkan
+   * penanda `?baru=<id entri>` — popupnya tidak lagi dirender server.
+   */
   const v = vInput.render({
     sesi,
     items: q.itemBySesi(sesi.id),
@@ -1103,11 +1249,24 @@ app.post('/sesi/:id/tambahan', (req, res) => {
   const kini = sekarang();
   const dibuang = new Set((buangForm(req) || []).map(String));
 
-  // Nilai yang diposting = angka penginputan BARU (selalu mulai 0, karena setiap penyimpanan membuat
-  // penginputan baru & langsung mengunci).
+  /*
+   * Nilai yang diposting = angka penginputan BARU (selalu mulai 0, karena setiap penyimpanan membuat
+   * penginputan baru & langsung mengunci).
+   *
+   * Dua jalur pengiriman (permintaan user revisi ke-156):
+   *  - **`_aksi=kunci`** → dikirim oleh tombol **"Kunci & Simpan"** DI DALAM popup "Selesai"
+   *    (`views/input.js → popupKunci`); nilainya ada di kolom `kunci_<itemId>` karena kolom itu
+   *    memang masih bisa diubah di popup sebelum dikunci.
+   *  - **`_aksi=tetap`** (tombol "Simpan & Tetap di Sini", juga Enter) → nilainya ada di kolom `t_<itemId>`
+   *    seperti semula.
+   */
+  const aksi = String(req.body._aksi || '').trim();
+  const mengunci = aksi === 'kunci';
+  const awalanNilai = mengunci ? 'kunci_' : 't_';
   const nilai = [];
   for (const [k, v] of Object.entries(req.body)) {
-    const m = /^t_(\d+)$/.exec(k);
+    if (!k.startsWith(awalanNilai)) continue;
+    const m = /^(\d+)$/.exec(k.slice(awalanNilai.length));
     if (!m) continue;
     const it = idItem.get(m[1]);
     if (!it) continue;
@@ -1254,7 +1413,14 @@ app.post('/sesi/:id/tambahan', (req, res) => {
       kurang ? ` · ${kurang} jenis barang tidak cukup di surat jalan itu (dikurangi sampai 0)` : ''
     }`;
   }
-  balik(req, res, `/sesi/${sesi.id}`, pesan);
+  /*
+   * Dua jalur selesai (permintaan user revisi ke-156):
+   *  - **"Kunci & Simpan"** di popup "Selesai" (`_aksi=kunci`) → penginputan tersimpan & terkunci lalu
+   *    kembali ke **halaman perjalanan**;
+   *  - **"Simpan & Tetap di Sini"** (`_aksi=tetap`, juga Enter) → tersimpan & terkunci tetapi pengguna
+   *    **tetap di halaman tambahan** supaya penginputan berikutnya langsung bisa diisi.
+   */
+  balik(req, res, mengunci ? `/sesi/${sesi.id}` : `/sesi/${sesi.id}/tambahan`, pesan);
 });
 
 /*
@@ -1681,6 +1847,165 @@ app.get('/api/produk/cari', (req, res) => {
   const cari = String(req.query.q || '').trim();
   const hasil = q.produkAll(cari, true).slice(0, 15);
   res.json({ ok: true, hasil });
+});
+
+/**
+ * Data REKAP STOK — dipakai halaman `/rekap-stok` dan dokumen PDF-nya.
+ *
+ * Permintaan user: *"Tabelnya salah, seharusnya kolom yang pertama nama barang, 12345 itu stok di sales,
+ * dan ada 2 kolom kosong, stok fisik, dan stok di aplikasi kledo, terakhir selisih"* → bentuknya lembar
+ * rekap: SEMUA barang jadi baris, satu kolom per nama sales berisi jumlah yang masih dibawa sales itu
+ * (B + T dari surat jalan yang belum selesai).
+ *
+ * Mengembalikan:
+ *   - `barang` : daftar produk (tanpa arsip) URUT A–Z — sama urutannya di layar maupun di kertas;
+ *   - `sales`  : daftar nama sales (nama baku dari tabel `sales`; nama yang hanya muncul di data
+ *                transaksi ikut ditambahkan supaya angkanya tidak hilang), urut A–Z;
+ *   - `matriks`: { produkId: { "<nama sales huruf kecil>": qty } }.
+ */
+function dataRekapStok() {
+  const barang = urutNama(q.produkAll(''));
+  const baris = q.rekapStokSales();
+  const peta = new Map();   // "<nama huruf kecil>" -> nama yang ditampilkan
+  q.salesAll().forEach((s) => peta.set(String(s.nama).trim().toLowerCase(), String(s.nama).trim()));
+  baris.forEach((r) => {
+    const k = String(r.sales || '').trim().toLowerCase();
+    if (k && !peta.has(k)) peta.set(k, String(r.sales).trim());
+  });
+  const sales = Array.from(peta.values()).sort((a, b) => a.localeCompare(b, 'id', { sensitivity: 'base' }));
+  const matriks = {};
+  baris.forEach((r) => {
+    const k = String(r.sales || '').trim().toLowerCase();
+    if (!k) return;
+    matriks[r.produk_id] = matriks[r.produk_id] || {};
+    matriks[r.produk_id][k] = Number(r.qty) || 0;
+  });
+  return { barang, sales, matriks };
+}
+
+/*
+ * HALAMAN REKAP STOK (permintaan user) — **SATU barang yang dipilih**, bukan seluruh barang.
+ * Permintaan user (revisi ke-160): "Pindah aksinya ke garis 3, rekap stok, jangan langsung tampilkan
+ * semua stok, tapi stok yang dipilih, ada ikon pilih barang".
+ * `?barang=<id>` = barang yang ditampilkan (klik nama barang di Inventory juga mengarah ke sini);
+ * tanpa parameter itu halaman menampilkan petunjuk untuk memilih barang dulu.
+ * Kolom Stok Fisik & Stok Kledo diisi di layar dan Selisih dihitung browser; isiannya TIDAK disimpan.
+ * Yang DISIMPAN adalah hasil yang sudah ditekan Fix (tabel `stok_fix`) dan daftarnya SELALU tampil di
+ * bawah tabel — termasuk untuk barang yang sudah diganti (permintaan user terbaru).
+ */
+app.get('/rekap-stok', (req, res) => {
+  const data = dataRekapStok();
+  const idPilih = Number(req.query.barang || 0) || 0;
+  /*
+   * Daftar pilihannya hanya barang aktif (tanpa arsip), tapi kalau id yang diminta TIDAK ada di situ
+   * (mis. dibuka dari Inventory yang sedang menampilkan barang arsip) barangnya tetap dicari langsung
+   * supaya halamannya tidak kosong tanpa penjelasan.
+   */
+  const barang = idPilih
+    ? data.barang.find((p) => Number(p.id) === idPilih) || q.produkById(idPilih) || null
+    : null;
+  res.send(
+    H(req, {
+      judul: 'Rekap Stok',
+      aktif: '/barang',
+      base: req.BASE,
+      isi: vRekapStok.render({
+        daftar: data.barang,
+        barang,
+        sales: data.sales,
+        matriks: data.matriks,
+        /*
+         * DAFTAR "Hasil Rekap" = SELURUH hasil fix, bukan hanya barang yang sedang dibuka (permintaan
+         * user: "Barang yang sudah di fix kan, tetap muncul di halaman rekap stok meski ganti barang lain
+         * untuk di rekap"). Datanya tersimpan di tabel `stok_fix`, jadi berpindah barang tidak
+         * menghilangkannya. `hasilBarang` dipakai untuk menandai baris barang yang sedang dibuka.
+         */
+        hasil: q.stokFixSemua(),
+        hasilBarang: barang ? q.stokFixByProduk(barang.id) : [],
+        bolehUbah: auth.bolehUbah(req),
+        base: req.BASE,
+        pesan: req.query.pesan,
+        versi: VERSI_STOK,
+      }),
+    })
+  );
+});
+
+/*
+ * FIX HASIL REKAP STOK (permintaan user: "ada tombol fix, setelah tekan fix, hasil rekap pindah ke bawah,
+ * cetak pdf itu data yang sudah fix").
+ *
+ * Angka stok tiap sales TIDAK dipercaya dari browser — dihitung ulang di sini dari `q.rekapStokSales()`
+ * (surat jalan yang belum selesai), lalu disimpan bersama Stok Fisik & Stok Kledo yang dikirim petugas.
+ * Selisih = Stok di Sales + Stok Fisik - Stok Kledo (rumus permintaan user, dihitung di server).
+ * Sesudah tersimpan, halaman dialihkan kembali ke barang yang sama — hasilnya muncul di daftar
+ * "Hasil Rekap" DI BAWAH tabel (dan itulah yang dicetak PDF).
+ */
+app.post('/rekap-stok/fix', (req, res) => {
+  const produkId = Number(req.body.produk_id || 0) || 0;
+  const p = q.produkById(produkId);
+  if (!p) return balik(req, res, '/rekap-stok', 'Barang tidak ditemukan');
+  const fisik = Math.max(0, Number(req.body.fisik || 0) || 0);
+  const kledo = Math.max(0, Number(req.body.kledo || 0) || 0);
+  if (!String(req.body.fisik || '').trim() && !String(req.body.kledo || '').trim()) {
+    return balik(req, res, `/rekap-stok?barang=${produkId}`, 'Isi Stok Fisik dan/atau Stok Kledo dulu sebelum menekan Fix');
+  }
+  const data = dataRekapStok();
+  const nilai = data.matriks[produkId] || {};
+  const rinci = data.sales.map((nama) => ({ nama, qty: Number(nilai[String(nama).trim().toLowerCase()] || 0) }));
+  const totalSales = rinci.reduce((a, r) => a + r.qty, 0);
+  const selisih = totalSales + fisik - kledo;
+  q.stokFixTambah({
+    produk_id: p.id,
+    kode: p.kode,
+    nama: p.nama,
+    sales_json: JSON.stringify(rinci),
+    total_sales: totalSales,
+    fisik,
+    kledo,
+    selisih,
+    petugas: (req.petugas && req.petugas.nama) || '',
+  });
+  audit(req, 'stok-difix', 'produk', p.id,
+    `Rekap stok ${p.kode} · ${p.nama} difix (Stok di Sales ${totalSales} + Fisik ${fisik} - Kledo ${kledo} = Selisih ${selisih})`);
+  balik(req, res, `/rekap-stok?barang=${produkId}`, `Hasil rekap ${p.nama} disimpan (Selisih ${selisih}) — masuk daftar Hasil Rekap di bawah`);
+});
+
+/** Batalkan satu baris hasil Fix (hanya peran yang boleh mengubah; dijaga middleware peran). */
+app.post('/rekap-stok/fix/hapus', (req, res) => {
+  const id = Number(req.body.id || 0) || 0;
+  const baris = id ? q.stokFixById(id) : null;
+  const balikKe = Number(req.body.produk_id || 0) || (baris ? baris.produk_id : 0);
+  if (baris) {
+    q.stokFixHapus(id);
+    audit(req, 'stok-fix-dihapus', 'produk', baris.produk_id, `Hasil rekap stok ${baris.nama} dibatalkan (selisih ${baris.selisih})`);
+  }
+  balik(req, res, balikKe ? `/rekap-stok?barang=${balikKe}` : '/rekap-stok', baris ? 'Hasil rekap dihapus' : 'Baris hasil rekap tidak ditemukan');
+});
+
+/*
+ * REKAP STOK -> berkas PDF yang berisi **HANYA DATA YANG SUDAH DIFIX** (permintaan user).
+ * `?barang=<id>` = hasil fix barang itu, `?semua=1` = seluruh hasil fix dari semua barang.
+ * Dibuat `lib/rekapStok.js` dengan penulis PDF yang sama, tanpa pustaka baru.
+ */
+app.get('/cetak/rekap-stok-pdf', (req, res) => {
+  const data = dataRekapStok();
+  const semua = String(req.query.semua || '') === '1';
+  const idPilih = Number(req.query.barang || 0) || 0;
+  const barang = idPilih
+    ? data.barang.find((p) => Number(p.id) === idPilih) || q.produkById(idPilih) || null
+    : null;
+  if (!semua && !barang) return balik(req, res, '/rekap-stok', 'Pilih barangnya dulu sebelum mencetak rekap stok');
+  const hasil = semua ? q.stokFixSemua() : q.stokFixByProduk(barang.id);
+  const pdf = rekapStokPdf({ hasil, sales: data.sales, semua });
+  const nama = semua ? 'Rekap Stok (semua barang difix)' : `Rekap Stok ${String(barang.kode || '').replace(/[^\w.-]+/g, '-')}`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${req.query.unduh === '1' ? 'attachment' : 'inline'}; filename="${nama}.pdf"`);
+  // anti-cache tegas: penampil PDF di ponsel pernah menyajikan berkas lama (lihat rute memo/ekspedisi)
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.send(pdf);
 });
 
 // ---------------------------------------------------------------- barcode svg / png
@@ -2260,6 +2585,35 @@ app.get('/cetak/memo-tambahan/:id/:batchId', (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `${req.query.unduh === '1' ? 'attachment' : 'inline'}; filename="${nama}"`);
   // anti-cache tegas: penampil PDF di ponsel pernah menyimpan memo versi lama (permintaan user)
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.send(pdf);
+});
+
+/*
+ * REKAP EKSPEDISI BARANG KESELURUHAN (permintaan user: "di samping tulisan expedisi barang, ada tombol
+ * cetak rekap expedisi barang keseluruhan, formatnya terserah asal mudah dimengerti dan informasinya
+ * lengkap"). Isinya SEMUA penginputan barang perjalanan ini + rincian per entri + rekap per barang;
+ * berkasnya dibuat `lib/rekapEkspedisi.js` (memakai `lib/pdf.js`, tanpa pustaka baru).
+ */
+app.get('/cetak/rekap-ekspedisi-pdf/:id', async (req, res) => {
+  const sesi = ambilSesi(req, res);
+  if (!sesi) return;
+  const entri = q.tambahanBatchList(sesi.id).map((b) => ({ ...b, items: q.tambahanItemBatch(b.id) }));
+  if (!entri.length) return balik(req, res, `/sesi/${sesi.id}`, 'Belum ada penginputan barang — rekap ekspedisi masih kosong');
+  /*
+   * PERMINTAAN USER (revisi ke-157): "logo tidak usah di memo" → dokumen ini TIDAK lagi memuat logo,
+   * jadi gambarnya tidak perlu diambil/didekode lagi di sini (dulu `ambilGambar()` dipanggil untuk
+   * menaruh logo di paling atas, revisi ke-147).
+   */
+  const pdf = rekapEkspedisi({
+    sesi,
+    entri,
+    namaAdmin: namaAdminSesi(sesi),   // nama admin = petugas yang MENGINPUT, bukan yang mencetak
+  });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${req.query.unduh === '1' ? 'attachment' : 'inline'}; filename="Memo Ekspedisi Barang Lengkap ${noSurat(sesi)}.pdf"`);
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');

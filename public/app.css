@@ -431,6 +431,44 @@ a:hover { text-decoration: underline; }
 
 /* ---------- daftar petugas ---------- */
 .petugas-list { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+/*
+ * ---------- HALAMAN KELOLA NAMA SALES: foto/biodata (permintaan user) ----------
+ * "di setting nama sales ada selain opsi hapus, berikan opsi edit, dan bisa mengisi biodata sales beserta
+ *  fotonya".
+ *
+ * `.avatar-sales` = bulatan foto sales (atau inisial namanya kalau belum ada foto) di daftar; ukuran
+ * hurufnya memakai calc(... * var(--f)) seperti elemen lain supaya ikut pilihan ukuran huruf pengguna.
+ */
+.td-foto { width: 1%; white-space: nowrap; text-align: center; }
+.avatar-sales {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--indigo), var(--violet)); color: #fff;
+  font-weight: 700; font-size: calc(12.6px * var(--f, 1)); letter-spacing: 0.4px;
+  overflow: hidden; flex: 0 0 auto;
+}
+.avatar-sales.foto { background: var(--solid); object-fit: cover; }
+.avatar-sales.besar { width: 132px; height: 132px; font-size: calc(34px * var(--f, 1)); }
+
+/* form biodata: foto di kiri, isian di kanan; di layar sempit menumpuk */
+.biodata { display: grid; gap: 20px; grid-template-columns: 190px minmax(0, 1fr); align-items: start; }
+.biodata-foto { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.biodata-foto .foto-besar {
+  width: 132px; height: 132px; border-radius: 50%; object-fit: cover;
+  border: 1px solid var(--line); background: var(--solid);
+}
+.biodata-foto .hint { margin: 0; }
+.biodata-isi { display: flex; flex-wrap: wrap; gap: 14px; min-width: 0; }
+.biodata-isi .field { flex: 1 1 200px; min-width: 0; }
+.biodata-isi .field-lebar { flex: 1 1 100%; }
+.biodata-isi textarea { min-height: 76px; resize: vertical; }
+.hapus-foto { display: flex; align-items: center; gap: 8px; font-size: calc(12.6px * var(--f, 1)); color: var(--muted); }
+.hapus-foto input { width: auto; }
+.sales-form .aksi-row { margin-top: 18px; }
+@media (max-width: 620px) {
+  .biodata { grid-template-columns: minmax(0, 1fr); }
+  .biodata-foto { align-items: center; text-align: center; }
+}
 .petugas-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-width: 0;
   padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card-soft);
@@ -934,6 +972,30 @@ details.entri-kepala[open] .entri-sum-toggle::before { content: '▾ '; }
  * menawarkan Tetap / Pindah tanpa menyimpan / Pindah & simpan) — tiap pilihan mudah ditekan di HP.
  */
 .konfirmasi-aksi.kolom { flex-direction: column; align-items: stretch; }
+/*
+ * POPUP "BARANG YANG DITAMBAHKAN" di halaman perjalanan (permintaan user revisi ke-154): daftar barang
+ * yang baru disimpan/dikunci (NO · NAMA BARANG · JUMLAH) + baris Total, dengan dua pilihan Simpan / Ubah.
+ * Kotaknya lebih lebar dari dialog konfirmasi biasa supaya namanya tidak terpotong, dan daftarnya bisa
+ * digulung sendiri kalau barangnya banyak.
+ */
+.popup-baru { max-width: 560px; }
+.popup-baru .tbl-wrap { max-height: 46vh; overflow: auto; margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; }
+.popup-baru .card-hint { margin: 0 0 4px; }
+/*
+ * POPUP "SELESAI — KUNCI & SIMPAN" halaman barang tambahan (permintaan user revisi ke-156): judul + tombol
+ * tutup sebaris, dan kolom JUMLAH tiap barang berupa INPUT supaya nilainya masih bisa diubah sebelum
+ * penginputannya dikunci (permintaan user: "yang tampil di pop up masih bisa di ubah").
+ */
+.popup-kunci-kepala { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.popup-kunci-kepala h2 { margin: 0; }
+.popup-kunci-tutup { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: calc(20px * var(--f, 1)); line-height: 1; padding: 0 4px; }
+.popup-kunci-tutup:hover { color: var(--ink); }
+.popup-baru td.num-jml input[data-kunci-qty] { max-width: 92px; padding: 7px 8px; text-align: center; font-weight: 700; }
+@media (max-width: 560px) {
+  .popup-baru { padding: 18px 16px 14px; }
+  .popup-baru .konfirmasi-aksi { flex-wrap: wrap; }
+  .popup-baru .konfirmasi-aksi .btn { flex: 1 1 0; min-width: 0; }
+}
 .konfirmasi-aksi.kolom .btn { width: 100%; min-height: 44px; white-space: normal; text-align: center; }
 @keyframes pudarMasuk { from { opacity: 0; } to { opacity: 1; } }
 @keyframes naikMasuk { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -1112,6 +1174,18 @@ table.tbl tr.baris-detail td:first-child { color: var(--muted); }
   .aksi-row.aksi-dua { gap: 8px; }
   .aksi-row.aksi-dua .btn { font-size: calc(12.5px * var(--f, 1)); padding: 11px 6px; }
 }
+/*
+ * SATU TOMBOL di baris aksi (permintaan user revisi ke-158: tombol "Simpan & Tetap di Sini" dihapus dari
+ * halaman barang tambahan sehingga tinggal "Selesai"). Tanpa aturan ini, `.aksi-dua .btn { flex: 1 1 0 }`
+ * membuat tombol tunggal itu melar selebar kartu (±1160 px di desktop — terlihat tidak rapi). Jadi di
+ * layar lebar lebarnya dibatasi & tetap menempel KANAN (sama seperti posisi tombol simpan sebelumnya),
+ * sedangkan di HP tetap melebar penuh supaya mudah ditekan.
+ */
+.aksi-row.aksi-dua.aksi-satu { justify-content: flex-end; }
+.aksi-row.aksi-dua.aksi-satu .btn { flex: 0 1 320px; }
+@media (max-width: 700px) {
+  .aksi-row.aksi-dua.aksi-satu .btn { flex: 1 1 0; }
+}
 
 /* ---------- print ---------- */
 @media print {
@@ -1258,6 +1332,12 @@ tr.baris-dihapus { background: rgba(220, 38, 38, 0.06); }
   color: var(--indigo);
   background: rgba(var(--aksen-rgb), 0.12);
 }
+/*
+ * Petunjuk kecil di baris filter Inventory (revisi ke-159): nama barang bisa diklik untuk melihat
+ * rincian barang yang masih dibawa sales & mengisi hitungan fisik. Dipisah ke barisnya sendiri saat
+ * layar sempit supaya tidak berebut tempat dengan kotak filter & tombol Urut A–Z.
+ */
+.hint-pilih { flex: 1 1 260px; margin: 0; font-size: calc(11.8px * var(--f, 1)); line-height: 1.35; }
 
 /* ---------- kepala Laporan: grup ikon (filter · cetak) yang rapi ---------- */
 .lapor-kepala { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -1593,7 +1673,12 @@ table.tbl th.kolom-hapus, table.tbl td.kolom-hapus { width: 46px; }
 }
 
 /* ---------- dasbor ---------- */
-.kepala-transaksi { gap: 10px; }
+/*
+ * Baris kepala = flex (judul di kiri, tombol di ujung kanan). Di dasbor kelas ini dipasang bersama
+ * `.grafik-head` (yang sudah flex); di kartu Ekspedisi hanya kelas ini yang dipakai, jadi flex-nya
+ * ditulis di sini supaya tombol cetak rekap benar-benar sebaris & menempel ke pojok kanan.
+ */
+.kepala-transaksi { display: flex; align-items: center; gap: 10px; }
 .kepala-transaksi .card-title-heading { margin: 0; flex: 0 0 auto; }
 .kepala-transaksi .ttk-tambah {
   width: 42px; height: 38px; border-radius: 12px; background: var(--solid);
@@ -1763,7 +1848,113 @@ button.gs-item.aktif .gs-angka { color: var(--indigo); }
  *  kolom Jumlah 140–175 px, tetap satu baris & tanpa geser mendatar.
  */
 #tblBarangTerjual th.num-no, #tblBarangTerjual td.num-no { width: 1%; white-space: nowrap; text-align: center; }
+/* Kolom NO & JUMLAH di popup "Barang yang ditambahkan" (revisi ke-154) — keduanya "fit" & rata tengah. */
+#tblBarangBaru th.num-no, #tblBarangBaru td.num-no { width: 1%; white-space: nowrap; text-align: center; }
+#tblBarangBaru th.num-jml, #tblBarangBaru td.num-jml { width: 1%; white-space: nowrap; text-align: center; }
 #tblBarangTerjual th.num-jml, #tblBarangTerjual td.num-jml { width: 1%; white-space: nowrap; text-align: center; }
+/*
+ * Nama barang di tabel Inventory = TAUTAN ke halaman Rekap Stok (mengkliknya membuka lembar rekap dengan
+ * baris barang itu disorot). Gayanya dibuat seperti tulisan biasa (bukan tombol kotak) supaya tabelnya
+ * tetap bersih — hanya kursor & garis bawah saat di-hover yang menandakan bisa diklik.
+ */
+.barang-pilih {
+  border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; border-bottom: 1px dashed transparent;
+}
+.barang-pilih:hover, .barang-pilih:focus-visible { color: var(--indigo); border-bottom-color: currentColor; }
+
+/* ---------- halaman REKAP STOK (form kertas versi layar, revisi ke-159/160) ---------- */
+/*
+ * PANEL "PILIH BARANG" (revisi ke-160): halaman rekap stok menampilkan SATU barang yang dipilih, dan
+ * barangnya diganti lewat panel ini. Panelnya elemen `<details>` supaya bisa dibuka TANPA JavaScript;
+ * di sini hanya soal tampilan (ringkasan seperti tombol, panel melayang di bawahnya).
+ */
+.pilih-barang { position: relative; }
+.pilih-barang > summary {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+}
+.pilih-barang > summary::-webkit-details-marker { display: none; }
+.pilih-barang > summary::marker { content: ''; }
+.pilih-barang[open] > summary { border-color: var(--indigo); color: var(--indigo); }
+.pilih-barang .ikon-pilih { width: 17px; height: 17px; flex: 0 0 17px; }
+.pilih-panel {
+  position: absolute; z-index: 70; right: auto; left: 0; top: calc(100% + 8px);
+  width: min(360px, calc(100vw - 40px));
+  padding: 12px 12px 10px; border-radius: 14px; border: 1px solid var(--line);
+  background: var(--solid); box-shadow: var(--shadow);
+}
+.pilih-panel .pilih-kepala {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: calc(12.6px * var(--f, 1)); font-weight: 700; letter-spacing: 0.3px;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 9px;
+}
+.pilih-panel .pilih-tutup { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: calc(19px * var(--f, 1)); line-height: 1; padding: 0 4px; }
+.pilih-panel .pilih-tutup:hover { color: var(--ink); }
+.pilih-panel input[type='search'] { width: 100%; margin-bottom: 9px; }
+.pilih-panel .pilih-daftar { max-height: 46vh; overflow: auto; display: grid; gap: 6px; }
+.pilih-panel .pilih-item {
+  display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card-soft); color: var(--ink);
+  font-size: calc(13px * var(--f, 1)); text-decoration: none;
+}
+.pilih-panel .pilih-item .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pilih-panel .pilih-item .kd { flex: 0 0 auto; font-size: calc(11.4px * var(--f, 1)); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pilih-panel .pilih-item:hover { border-color: rgba(var(--aksen-rgb), 0.55); background: var(--solid); }
+.pilih-panel .pilih-item.aktif { border-color: transparent; background: linear-gradient(135deg, var(--indigo), var(--violet)); color: #fff; }
+.pilih-panel .pilih-item.aktif .kd { color: rgba(255, 255, 255, 0.85); }
+.pilih-panel .pilih-kosong { padding: 12px 4px; text-align: center; color: var(--muted); font-size: calc(12.6px * var(--f, 1)); }
+.pilih-panel .pilih-kaki { margin-top: 9px; font-size: calc(11.6px * var(--f, 1)); color: var(--muted); }
+/* label barang yang sedang dipilih di baris alat */
+.urut-baris .terpilih { font-size: calc(12.8px * var(--f, 1)); color: var(--muted); }
+.urut-baris .terpilih b { color: var(--ink); }
+.urut-baris .terpilih .kd { font-size: calc(11.6px * var(--f, 1)); }
+.urut-baris .btn-primary { margin-left: auto; }
+/* kolom kode di bawah nama barang (sel dibekukan) */
+#tblStok tbody td.beku .kd { display: block; margin-top: 2px; }
+/*
+ * Kepala tabelnya DUA BARIS (kelompok "Stok di Sales" di atas + nama tiap sales di bawahnya). Keduanya
+ * `sticky` (`table.tbl thead th { position: sticky; top: 0 }`), jadi baris kedua WAJIB diberi `top`
+ * sendiri — kalau tidak keduanya menempel di 0 dan saling menumpuk. Nilainya diukur di `public/app.js`
+ * (`pasangRekapStok()` → `--tbl-stok-kepala`) karena tinggi baris pertama ikut ukuran huruf pemakai.
+ */
+#tblStok thead tr:first-child th { top: 0; }
+#tblStok thead tr:nth-child(2) th { top: var(--tbl-stok-kepala, 30px); z-index: 3; }
+/*
+ * KEPALA TABEL TIDAK BOLEH TERPOTONG/TUMPANG (keluhan user: "Header nya rusak" lalu "header masih tumpang
+ * tindih"). Dua penyebab yang sudah ditemukan & diperbaiki:
+ *  (1) `table-layout: auto` memberi kolom isian lebar besar (mengikuti input 76 px) sehingga kolom sales
+ *      hanya kebagian 42–52 px → nama sales membungkus 2 baris & "NAMA BARANG" terpotong;
+ *  (2) ketika tabelnya harus DIGESER MENDATAR (karena terlalu lebar untuk layar HP), kolom "Nama Barang"
+ *      yang membeku (`sticky left`) menutupi tulisan kepala di sebelahnya — itulah yang terlihat seperti
+ *      "kepala tumpang tindih" pada tangkapan layar user.
+ * Perbaikan revisi ke-162 (dipakai bersama perbaikan di atas):
+ *      kepala kolom sales memakai **ANGKA 1..N** (bukan nama) sehingga kolomnya cukup ±26 px dan
+ *      tabelnya MUAT di layar HP tanpa geser mendatar → kepala tidak pernah tertutup kolom beku.
+ * Semua sel kepala tetap `white-space: nowrap` supaya tidak ada tulisan yang membungkus.
+ */
+#tblStok thead th { white-space: nowrap; padding: 8px 5px; }
+#tblStok thead th.nama-sales { font-size: calc(11.6px * var(--f, 1)); font-weight: 700; letter-spacing: 0; text-transform: none; }
+#tblStok th.kelompok { letter-spacing: 0.3px; }
+/* kolom angka sales (nomor 1..N) sempit & rata tengah seperti form kertas */
+#tblStok thead tr:nth-child(2) th { min-width: calc(24px * var(--f, 1)); }
+#tblStok td.num, #tblStok th.num { padding-left: 4px; padding-right: 4px; }
+#tblStok th.nama-sales { font-size: calc(11px * var(--f, 1)); line-height: 1.15; padding: 8px 6px; text-transform: none; }
+#tblStok td.kolom-isi, #tblStok th.kolom-isi { width: 1%; white-space: nowrap; padding-left: 4px; padding-right: 4px; }
+#tblStok td.kolom-isi input {
+  width: calc(58px * var(--f, 1)); padding: 6px 4px; text-align: center; font-weight: 700;
+  border-radius: 9px; border: 1px solid var(--line); background: var(--input-bg); color: var(--ink); font: inherit;
+}
+#tblStok td.kolom-selisih { width: 1%; white-space: nowrap; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; }
+#tblStok td.kolom-selisih.ada-selisih { color: #b91c1c; }
+/*
+ * Baris yang dibuka dari klik nama barang di Inventory (`?barang=<id>`) disorot. Sel yang DIBEKUKAN harus
+ * tetap pekat (aturan yang sama dengan baris khusus lain) — `background-color` opak + gradien tipis.
+ */
+table.tbl tbody tr.baris-sorot > td { background: rgba(var(--aksen-rgb), 0.14); }
+table.tbl.kolom-beku tbody tr.baris-sorot > td.beku {
+  background-color: var(--baris);
+  background-image: linear-gradient(rgba(var(--aksen-rgb), 0.16), rgba(var(--aksen-rgb), 0.16));
+}
 .grafik-total .gs-label { font-size: calc(11.4px * var(--f, 1)); font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); }
 .grafik-total .gs-angka { font-size: calc(22px * var(--f, 1)); font-weight: 800; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .grafik-total .gs-ket { font-size: calc(11px * var(--f, 1)); color: var(--muted); }
@@ -2092,8 +2283,30 @@ table.tbl th.kolom-b, table.tbl td.dibawa, table.tbl td.sebelumnya {
 }
 html[data-tema="gelap"] .peringatan-retur { color: #fcd34d; background: rgba(245, 158, 11, 0.18); }
 
-/* ---------- pembungkusan kartu publik & tabel ---------- */ (dulu "Catatan Pengambilan Barang") — daftar TERKUNCI + rincian barang */
-.pengambilan-card .rinci { margin: 0; }
+/* ---------- KARTU EKSPEDISI BARANG (daftar TERKUNCI per penginputan + rincian barang) ---------- */
+
+/*
+ * Tombol cetak REKAP EKSPEDISI di POJOK KANAN, LURUS dengan tulisan "Ekspedisi Barang" (permintaan user:
+ * "Ikon rekap exspedisi berada di pojok kanan, lurus dengan tulisan expedisi barang"). `margin-left: auto`
+ * mendorong tombolnya ke ujung kanan baris kepala — sejajar tinggi dengan judulnya karena barisnya flex
+ * dengan `align-items: center` (lihat .kepala-transaksi).
+ */
+/*
+ * Tombol "Cetak Memo Pengambilan Lengkap" DI BAWAH tabel kolom pengambilan (permintaan user revisi ke-150:
+ * "ikon cetak memo lengkap pindah ke bawah kolom exspedisi, beri keterangan cetak memo pengambilan
+ * lengkap"). Bentuknya tombol berteks dengan ikon printer di kiri, selebar isinya, rata kanan supaya rapi
+ * di bawah tabel (dan melebar penuh di layar sempit).
+ */
+.pengambilan-card .cetak-memo-baris { display: flex; justify-content: flex-end; margin-top: 12px; }
+.pengambilan-card .cetak-memo-lengkap {
+  display: inline-flex; align-items: center; gap: 8px;
+  text-decoration: none; white-space: nowrap;
+}
+.pengambilan-card .cetak-memo-lengkap svg { width: 18px; height: 18px; flex: 0 0 18px; }
+@media (max-width: 700px) {
+  .pengambilan-card .cetak-memo-baris { justify-content: stretch; }
+  .pengambilan-card .cetak-memo-lengkap { width: 100%; justify-content: center; }
+}
 /*
  * TABEL EKSPEDISI BARANG (permintaan user revisi ke-137):
  *  - "semua kolom di ekspedisi barang rata tengah kolom" → kelas `tbl-tengah` MERATA-TENGAHKAN semua
@@ -2115,8 +2328,24 @@ table.tbl.tbl-tengah tr.baris-tanggal > td {
   background-color: var(--baris-alt);
   background-image: linear-gradient(rgba(var(--aksen-rgb), 0.16), rgba(var(--aksen-rgb), 0.16));
   letter-spacing: 0.4px;
-}.pengambilan-card .rinci > summary { cursor: pointer; color: var(--indigo); font-size: calc(12.3px * var(--f, 1)); font-weight: 650; }
+}
+
 .pengambilan-card tr.baris-rinci > td { background: rgba(var(--aksen-rgb), 0.05); padding: 6px 12px 10px; }
+/*
+ * BARIS PENGINPUTAN YANG BISA DIKLIK (permintaan user revisi ke-152): "cukup klik baris untuk memunculkan
+ * rincian, tidak usah keterangan klik baris untuk melihat rincian" → tidak ada tulisan petunjuk apa pun;
+ * penandanya cukup PANAH kecil di kolom terakhir (angka qty) yang berputar saat barisnya terbuka.
+ * Kursor pointer + sorotan saat fokus keyboard menandakan barisnya bisa diklik.
+ */
+.pengambilan-card tr.baris-rinci-klik { cursor: pointer; }
+.pengambilan-card tr.baris-rinci-klik > td.num { position: relative; padding-right: 18px; }
+.pengambilan-card tr.baris-rinci-klik > td.num::after {
+  content: ''; position: absolute; right: 7px; top: 50%; margin-top: -2px;
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--muted);
+  transition: transform 0.15s ease;
+}
+.pengambilan-card tr.baris-rinci-klik.terbuka > td.num::after { transform: rotate(180deg); }
+.pengambilan-card tr.baris-rinci-klik:focus-visible { outline: 2px solid var(--indigo); outline-offset: -2px; }
 .rinci-list { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 4px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .rinci-list li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 8px; border-radius: 8px; background: var(--card-soft); font-size: calc(12.2px * var(--f, 1)); }
 .rinci-list .rinci-nama { min-width: 0; overflow-wrap: anywhere; }
@@ -2127,6 +2356,21 @@ table.tbl.tbl-tengah tr.baris-tanggal > td {
 .catatan-otomatis { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .label-otomatis { font-size: calc(11.8px * var(--f, 1)); font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px; }
 .catatan-otomatis .rinci-list { grid-template-columns: minmax(0, 1fr); }
+/*
+ * KEPALA TANGGAL catatan otomatis (permintaan user revisi ke-145: "Tanggal catatan tulis di atas nomer
+ * lurus dengan awal nomer"). Barisnya memakai wadah yang sama dengan baris nomor (li di dalam
+ * .rinci-list) dan teksnya dimulai dari tepi kiri — jadi LURUS dengan awal nomor, bukan menjorok di
+ * bawah teks catatannya. Nomor di bawahnya mulai dari 1 lagi untuk tiap tanggal (dihitung
+ * lib/util.js -> kelompokCatatan()).
+ */
+.catatan-otomatis .rinci-list li.catatan-tanggal {
+  justify-content: flex-start;
+  background: none;
+  padding-left: 8px;
+  margin-top: 8px;
+}
+.catatan-otomatis .rinci-list li.catatan-tanggal:first-child { margin-top: 0; }
+.catatan-otomatis .rinci-kepala { font-weight: 700; color: var(--ink); }
 .catatan-otomatis .rinci-list li { background: rgba(99, 95, 130, 0.08); }
 
 /* ================= SETTING: EDIT LOGO & LAYOUT SURAT =================
@@ -2205,3 +2449,61 @@ table.tbl.tbl-tengah tr.baris-tanggal > td {
 .pasang-langkah li { padding-left: 4px; line-height: 1.45; }
 .pasang-langkah b { color: var(--indigo); }
 html[data-tema="gelap"] .pasang-langkah b { color: #c7d2fe; }
+
+/* ---------- tombol FIX + kartu HASIL REKAP (permintaan user revisi ke-162) ---------- */
+.form-fix { display: block; }
+.form-fix .fix-baris { margin-top: 14px; }
+.form-fix .fix-baris .btn { flex: 0 1 240px; }
+.form-fix .fix-baris .btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+.kartu-hasil { margin-top: 22px; }
+.kartu-hasil .kepala-hasil { display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
+.kartu-hasil .kepala-hasil .card-title-heading { margin: 0; flex: 1 1 auto; min-width: 0; }
+.kartu-hasil .kepala-hasil .hasil-aksi { display: flex; gap: 10px; flex-wrap: wrap; }
+/*
+ * Baris hasil rekap MILIK BARANG YANG SEDANG DIBUKA ditandai (permintaan user revisi ke-165: daftar hasil
+ * fix memuat SEMUA barang, jadi baris barang yang sedang dibuka perlu bisa dikenali). Latar dipasang
+ * sebagai `background-image` di atas warna baris supaya tidak bentrok dengan aturan baris berselang-seling
+ * (yang memakai `background-color`) maupun dengan sel kolom beku.
+ */
+#tblHasilStok tbody tr.baris-terpilih > td { background-image: linear-gradient(rgba(var(--aksen-rgb), 0.16), rgba(var(--aksen-rgb), 0.16)); }
+#tblHasilStok tbody tr.baris-terpilih > td.beku { background-image: linear-gradient(rgba(var(--aksen-rgb), 0.16), rgba(var(--aksen-rgb), 0.16)); }
+#tblHasilStok tbody tr.baris-terpilih td.beku .nm { font-weight: 700; }
+.kartu-hasil .keterangan-nomor, .keterangan-nomor { font-size: calc(11.8px * var(--f, 1)); line-height: 1.5; }
+#tblHasilStok td.num, #tblHasilStok th.num { padding-left: 4px; padding-right: 4px; }
+#tblHasilStok tbody td.beku { white-space: normal; }
+#tblHasilStok td.ada-selisih { color: #b91c1c; font-weight: 700; }
+#tblHasilStok .form-hapus-fix { display: inline; }
+#tblHasilStok .ttk-hapus { width: 32px; height: 30px; }
+@media (max-width: 700px) {
+  /*
+   * DI HP TABEL HARUS **MUAT TANPA DIGESER MENDATAR** (keluhan user: "header masih tumpang tindih" — saat
+   * tabel digeser, kolom "Nama Barang" yang membeku menutupi tulisan kepala di sebelahnya). Karena itu:
+   *  - padding sel dirapatkan & kolom angka sales dibuat sempit (isinya cuma 1 angka);
+   *  - kepala kolom isian (Stok Fisik / Stok Kledo / Selisih) DIBOLEHKAN MEMBUNGKUS dua baris
+   *    (sebelumnya `nowrap` sehingga tiap kolom minta ±62 px) — kepala tabelnya memang dua baris tinggi;
+   *  - padding kartu di halaman ini dikecilkan supaya ruang tabelnya bertambah.
+   */
+  .halaman-rekap-stok .card { padding: 14px 10px; }
+  #tblStok thead th, #tblStok tbody td, #tblHasilStok thead th, #tblHasilStok tbody td { padding: 7px 2px; }
+  #tblStok td.kolom-isi input { width: calc(38px * var(--f, 1)); padding: 6px 2px; }
+  #tblStok thead tr:nth-child(2) th { min-width: calc(17px * var(--f, 1)); }
+  #tblStok thead th.kolom-isian { white-space: normal; font-size: calc(10.4px * var(--f, 1)); line-height: 1.15; }
+  /*
+   * Tabel HASIL di bawah juga harus muat tanpa digeser. Kolomnya kini NO · Nama Barang · angka 1..N ·
+   * Stok Fisik · Stok Kledo · Selisih · tombol hapus (kolom "Waktu fix" & nama pemfix sudah dihapus).
+   * `!important` WAJIB di sini: tabel itu memakai kelas `.rapat` yang menulis
+   * `.rapat td, .rapat th { padding: 7px 10px !important }` — tanpa ini padding tidak menyusut
+   * (terukur kolom NO 39 px & tabel tetap meluber 142 px).
+   */
+  #tblHasilStok thead th, #tblHasilStok tbody td { padding: 6px 2px !important; }
+  #tblHasilStok thead th { font-size: calc(10.6px * var(--f, 1)); }
+  #tblHasilStok thead th.kolom-isian { white-space: normal; line-height: 1.15; }
+  #tblHasilStok .aksi-sel { width: calc(30px * var(--f, 1)); }
+  #tblHasilStok thead tr:nth-child(2) th { min-width: calc(16px * var(--f, 1)); }
+  #tblHasilStok thead th.beku { white-space: normal; font-size: calc(10.4px * var(--f, 1)); line-height: 1.15; }
+  #tblHasilStok td.beku .nm { display: block; overflow-wrap: anywhere; }
+  #tblHasilStok .ttk-hapus { width: 28px; height: 26px; }
+  #tblStok thead tr:first-child th.beku { white-space: normal; font-size: calc(10.8px * var(--f, 1)); line-height: 1.15; }
+  #tblStok td.beku .nm { display: block; overflow-wrap: anywhere; }
+  .form-fix .fix-baris .btn { flex: 1 1 0; }
+}

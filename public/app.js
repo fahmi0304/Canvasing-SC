@@ -1154,6 +1154,255 @@
    * di `<tr class="audit-rinci" hidden>` tepat di bawah barisnya; klik baris = tampil, klik lagi =
    * tersembunyi. Tidak ada teks "klik untuk lihat" — penandanya cuma panah kecil di kolom Aksi (CSS).
    */
+  /*
+   * ---- POPUP "SELESAI — KUNCI & SIMPAN" di halaman BARANG TAMBAHAN (permintaan user revisi ke-156) ----
+   * Permintaan user: "Pindah tombol simpan dan koreksi di kanan, dan ubah namanya ke selesai, dan fungsinya
+   * berubah, tidak langsung mengunci imputan, hanya menampilkan pop up, tombol kunci dan simpan berada di
+   * pop up, jadi yang tampil di pop up masih bisa di ubah".
+   *
+   * Jadi tombol kanan **Selesai** tidak mengirim formulir — ia hanya membuka popup `#popupKunci` yang
+   * isinya dibangun dari nilai yang SEDANG terisi (daftar barang + kolom JUMLAH yang masih bisa diubah +
+   * baris Total). Penginputan baru dibuat & dikunci setelah tombol **Kunci & Simpan** di dalam popup
+   * dikirim (formulir `#formKunci`, `_aksi=kunci`, kolom `kunci_<itemId>`). Popup bisa ditutup lewat
+   * "Kembali ubah", tombol ×, klik latar, atau `Esc` — tanpa mengubah apa pun.
+   */
+  (function pasangPopupKunci() {
+    const lapis = document.getElementById('popupKunci');
+    const btn = document.getElementById('btnSelesai');
+    if (!lapis || !btn) return;
+    const body = document.getElementById('bodyKunci');
+    const total = document.getElementById('totalKunci');
+    const sumber = document.getElementById('sumberKunci');
+
+    const nilai = (inp) => parseInt(inp && inp.value, 10) || 0;
+    const esc = (v) =>
+      String(v === null || v === undefined ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const namaBaris = (tr) => {
+      const nm = tr.querySelector('.nm');
+      return nm ? nm.textContent.trim() : String(tr.getAttribute('data-kode') || '');
+    };
+    const hitungTotal = () => {
+      let t = 0;
+      body.querySelectorAll('input[data-kunci-qty]').forEach((i) => { t += nilai(i); });
+      if (total) total.textContent = String(t);
+      return t;
+    };
+    const isi = () => {
+      const pilih = document.getElementById('sumberAmbil');
+      if (sumber && pilih) sumber.value = pilih.value;   // sumber yang dipilih ikut terkirim
+      const dipakai = Array.from(document.querySelectorAll('#bodyBarang tr.barang')).filter((tr) => {
+        if (tr.classList.contains('dibuang')) return false;
+        return nilai(tr.querySelector('[data-qty]')) > 0;
+      });
+      body.innerHTML = dipakai.length
+        ? dipakai
+            .map((tr, n) => {
+              const q = nilai(tr.querySelector('[data-qty]'));
+              const nm = namaBaris(tr);
+              return '<tr><td class="num-no">' + (n + 1) + '</td><td>' + esc(nm) + '</td>' +
+                '<td class="num-jml num"><input type="number" min="0" inputmode="numeric" name="kunci_' + esc(tr.getAttribute('data-id')) +
+                '" value="' + q + '" data-kunci-qty aria-label="Jumlah ' + esc(nm) + '"></td></tr>';
+            })
+            .join('')
+        : '<tr><td colspan="3" class="kosong">Belum ada jumlah barang yang diisi.</td></tr>';
+      hitungTotal();
+    };
+    const buka = (ya) => {
+      if (ya) isi();
+      lapis.hidden = !ya;
+      btn.setAttribute('aria-expanded', ya ? 'true' : 'false');
+    };
+    btn.addEventListener('click', () => buka(true));
+    lapis.addEventListener('input', (ev) => {
+      if (ev.target && ev.target.hasAttribute && ev.target.hasAttribute('data-kunci-qty')) hitungTotal();
+    });
+    lapis.addEventListener('click', (ev) => {
+      const t = ev.target;
+      if (t === lapis) { buka(false); return; }          // klik latar = kembali mengubah
+      if (t && t.closest && t.closest('[data-popup-tutup]')) buka(false);
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (!lapis.hidden && (ev.key === 'Escape' || ev.keyCode === 27)) buka(false);
+    });
+  })();
+
+  /*
+   * ---- REKAP STOK: pilih barang + hitung Selisih (permintaan user) ----
+   * Permintaan user (revisi ke-160): "Pindah aksinya ke garis 3, rekap stok, jangan langsung tampilkan
+   * semua stok, tapi stok yang dipilih, ada ikon pilih barang".
+   *
+   * Halaman `/rekap-stok` karena itu menampilkan **satu barang** (yang dipilih) dan punya panel
+   * "Pilih barang". Panelnya elemen `<details>` (sudah bisa dibuka TANPA JavaScript) — di sini hanya
+   * ditambah: kotak cari yang menyaring daftar, menutup saat klik di luar / `Esc`, dan menggulung daftar
+   * ke barang yang sedang dipilih supaya langsung terlihat.
+   *
+   * Kolom **Selisih** = **Stok di Sales + Stok Fisik - Stok Kledo** (permintaan user revisi ke-161),
+   * di mana "Stok di Sales" = jumlah seluruh kolom sales baris itu (atribut `data-total-sales` dari
+   * server). Dihitung ulang setiap kali kotak isian berubah dan
+   * **TIDAK disimpan** (permintaan user: cukup diisi & dilihat di layar) — jadi tidak ada satu pun
+   * permintaan ke server. Selisih yang bukan 0 diberi tanda merah, sel yang masih kosong ditulis garis
+   * datar supaya jelas belum dihitung.
+   */
+  (function pasangRekapStok() {
+    const tabel = document.getElementById('tblStok');
+    const panel = document.querySelector('[data-pilih-panel]');
+    const detail = document.getElementById('pilihBarang');
+    const cari = document.querySelector('[data-pilih-cari]');
+
+    /* ---- kolom Selisih (hanya ada kalau ada barang yang dipilih) ---- */
+    if (tabel) {
+      const angkaIsian = (inp) => {
+        const v = parseInt(inp && inp.value, 10);
+        return isNaN(v) ? null : v;
+      };
+      function segarkanSelisih(tr) {
+        const sel = tr.querySelector('[data-selisih]');
+        if (!sel) return;
+        const sales = parseInt(tr.getAttribute('data-total-sales'), 10) || 0;
+        const fisik = angkaIsian(tr.querySelector('[data-fisik]'));
+        const kledo = angkaIsian(tr.querySelector('[data-kledo]'));
+        if (fisik === null && kledo === null) {
+          sel.textContent = '\u2014';
+          sel.classList.remove('ada-selisih');
+          return;
+        }
+        // Selisih = Stok di Sales + Stok Fisik - Stok Kledo (permintaan user)
+        // Selisih = Stok di Sales + Stok Fisik - Stok Kledo (permintaan user)
+        const beda = sales + (fisik || 0) - (kledo || 0);
+        sel.textContent = String(beda);
+        sel.classList.toggle('ada-selisih', beda !== 0);
+      }
+      tabel.addEventListener('input', (ev) => {
+        const inp = ev.target;
+        if (!inp || !inp.hasAttribute) return;
+        if (!inp.hasAttribute('data-fisik') && !inp.hasAttribute('data-kledo')) return;
+        const tr = inp.closest('tr');
+        if (tr) segarkanSelisih(tr);
+      });
+      /*
+       * Tombol **Fix** (permintaan user revisi ke-162) mengirim formulir `#formFix` berisi Stok Fisik &
+       * Stok Kledo yang sedang diisi; server menghitung ulang Stok di Sales & Selisih lalu menyimpannya
+       * sebagai hasil rekap. Tombolnya dinonaktifkan selama salah satu kolom isian masih kosong supaya
+       * petugas tahu harus mengisi dulu — pesannya sama dengan yang diperiksa server.
+       */
+      const btnFix = document.getElementById('btnFix');
+      if (btnFix) {
+        const adaIsi = () => {
+          const f = tabel.querySelector('[data-fisik]');
+          const k = tabel.querySelector('[data-kledo]');
+          const isi = (i) => String((i && i.value) || '').trim() !== '';
+          return isi(f) || isi(k);
+        };
+        const jaga = () => {
+          btnFix.disabled = !adaIsi();
+          btnFix.title = btnFix.disabled ? 'Isi Stok Fisik atau Stok Kledo dulu' : 'Simpan hasil rekap ini';
+        };
+        jaga();
+        tabel.addEventListener('input', jaga);
+      }
+      /*
+       * Kepala tabelnya DUA baris (kelompok kolom di atas, nama sales di bawah) dan keduanya `sticky`.
+       * Dua baris sticky butuh posisi `top` yang berbeda — nilai baris pertama diukur di sini supaya baris
+       * kedua menempel TEPAT di bawahnya (tanpa pengukuran, keduanya menempel di 0 dan saling menumpuk).
+       * Diukur ulang saat ukuran jendela berubah karena tinggi baris ikut ukuran huruf (Customize Tema).
+       */
+      function aturKepala() {
+        const barisKepala = tabel.tHead && tabel.tHead.rows[0];
+        if (!barisKepala || !barisKepala.cells.length) return;
+        const tinggi = Math.ceil(barisKepala.getBoundingClientRect().height);
+        if (tinggi > 0) tabel.style.setProperty('--tbl-stok-kepala', tinggi + 'px');
+      }
+      aturKepala();
+      window.addEventListener('resize', aturKepala);
+    }
+
+    /* ---- panel "Pilih barang" ---- */
+    if (!panel || !detail) return;
+    const item = () => Array.from(panel.querySelectorAll('[data-pilih-item]'));
+    const info = document.getElementById('infoPilihBarang');
+
+    /** Saring daftar barang dengan kata kunci (nama + kode). */
+    function saring() {
+      const kata = ((cari && cari.value) || '').trim().toLowerCase();
+      let tampil = 0;
+      item().forEach((a) => {
+        const cocok = !kata || String(a.dataset.cari || '').indexOf(kata) >= 0;
+        a.hidden = !cocok;
+        if (cocok) tampil += 1;
+      });
+      if (info) info.textContent = kata ? `${tampil} barang cocok` : `${tampil} barang`;
+    }
+    if (cari) {
+      cari.addEventListener('input', saring);
+      /*
+       * Enter di kotak cari = memilih hasil PERTAMA (perilaku yang sama dengan kotak cari layar input).
+       * Tanpa ini Enter mengirim formulir/me-reload halaman dan pilihan pengguna hilang.
+       */
+      cari.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter' && ev.keyCode !== 13) return;
+        ev.preventDefault();
+        const pertama = item().find((a) => !a.hidden);
+        if (pertama) location.href = pertama.getAttribute('href');
+      });
+    }
+    // nyalakan pencarian saat panel dibuka (tanpa harus mengklik kotaknya dulu)
+    detail.addEventListener('toggle', () => {
+      if (!detail.open) return;
+      if (cari) { cari.value = ''; saring(); cari.focus(); }
+      const aktif = panel.querySelector('[data-pilih-item].aktif');
+      if (aktif && aktif.scrollIntoView) aktif.scrollIntoView({ block: 'center' });
+    });
+    // tutup: tombol × atau klik di luar panel
+    panel.addEventListener('click', (ev) => {
+      if (ev.target.closest && ev.target.closest('[data-pilih-tutup]')) detail.open = false;
+    });
+    document.addEventListener('click', (ev) => {
+      if (!detail.open) return;
+      if (ev.target.closest && ev.target.closest('#pilihBarang')) return;
+      detail.open = false;
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (detail.open && (ev.key === 'Escape' || ev.keyCode === 27)) detail.open = false;
+    });
+  })();
+
+  /*
+   * ---- RINCIAN BARIS DIKELUARKAN DENGAN KLIK BARIS (permintaan user revisi ke-152) ----
+   * "lihat rincian hapus, cukup klik baris untuk memunculkan rincian, tidak usah keterangan klik baris
+   *  untuk melihat rincian" → di kartu Ekspedisi Barang, baris penginputan (`[data-rinci-baris]`) melepas
+   * baris rincian (`[data-rinci-detail]`, `hidden` sejak dirender) saat DIKLIK; diklik lagi = tertutup.
+   * Tidak ada tulisan petunjuk apa pun di layar — penandanya hanya panah kecil di kolom angka (CSS).
+   * Polanya sama dengan baris riwayat di halaman Audit (`data-audit-baris`), termasuk dukungan keyboard
+   * (barisnya `tabindex="0"` + `role="button"`).
+   */
+  (function pasangRinciBaris() {
+    const ABAIKAN = 'a, button, input, select, textarea, label, summary, [data-ttk], [data-cetak]';
+    function tukar(tr) {
+      const id = tr.getAttribute('data-rinci-baris');
+      const rinci = id ? document.getElementById(id) : null;
+      if (!rinci) return;
+      const buka = rinci.hidden;
+      rinci.hidden = !buka;
+      tr.classList.toggle('terbuka', buka);
+      tr.setAttribute('aria-expanded', buka ? 'true' : 'false');
+    }
+    document.addEventListener('click', (ev) => {
+      const el = ev.target;
+      if (!el || !el.closest) return;
+      if (el.closest(ABAIKAN)) return;                                  // tautan/tombol tetap bekerja sendiri
+      const tr = el.closest('[data-rinci-baris]');
+      if (tr) tukar(tr);
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ' && ev.keyCode !== 13) return;
+      const tr = ev.target && ev.target.closest ? ev.target.closest('[data-rinci-baris]') : null;
+      if (!tr) return;
+      ev.preventDefault();
+      tukar(tr);
+    });
+  })();
+
   (function pasangAudit() {
     function tukar(tr) {
       const id = tr.getAttribute('data-audit-baris');

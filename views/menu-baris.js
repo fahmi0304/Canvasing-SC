@@ -1,5 +1,6 @@
 'use strict';
 const { esc } = require('../lib/util');
+const { noSurat } = require('../lib/kode');
 const { GARIS } = require('./ikon');
 
 /**
@@ -80,4 +81,40 @@ exports.alamatBaris = function (s, base = '') {
 /** Atribut untuk `<tr>` supaya SELURUH baris bisa diklik. Handlernya `pasangKlikBaris()` di public/app.js. */
 exports.attrBarisKlik = function (s, base = '') {
   return ` class="baris-klik" data-baris-open="${esc(exports.alamatBaris(s, base))}" tabindex="0" role="link"`;
+};
+
+/*
+ * ---------- OPSI "UNDO" UNTUK ADMINISTRATOR (permintaan user) ----------
+ * "Administrator bisa meng undo surat jalan" — dengan pilihan user:
+ *   - **satu langkah**: Selesai → Sedang Rekap, Sedang Rekap → Ongoing, Ongoing → Draft;
+ *   - **angka B/T/K/S tidak diubah** (hanya statusnya yang turun);
+ *   - surat jalan berikutnya yang tadi dibuat saat mengunci rekap **dibiarkan**;
+ *   - tombolnya ada di **menu baris dasbor + laporan** (khusus administrator).
+ * Dipakai BERSAMA oleh `views/dashboard.js` dan `views/laporan.js` supaya label & konfirmasinya sama;
+ * rutenya `POST /sesi/:id/undo` (server memeriksa sendiri bahwa pengirimnya administrator).
+ *
+ * Baris yang masih `draft` tidak diberi opsi ini (tidak ada langkah yang perlu dibuka) — menu barisnya
+ * tidak menjadi kosong karena di dasbor masih ada "Buka"/PDF/Hapus dan di Laporan masih ada
+ * "Buka"/PDF.
+ */
+const UNDO_TUJUAN = {
+  selesai: { label: 'Undo: buka ke Sedang Rekap', ket: 'batalkan langkah Selesai supaya K & S bisa diperbaiki' },
+  rekap: { label: 'Undo: buka ke Ongoing', ket: 'batalkan rekap supaya barang tambahan bisa diisi lagi' },
+  kirim: { label: 'Undo: buka ke Draft', ket: 'buka kunci surat jalan supaya barang bawaan bisa diubah' },
+};
+exports.opsiUndo = function (s, base, balikKe = '') {
+  const tujuan = UNDO_TUJUAN[s.status];
+  if (!tujuan) return null;
+  const kembali = balikKe ? `<input type="hidden" name="balik" value="${esc(balikKe)}">` : '';
+  return {
+    form: `${base}/sesi/${s.id}/undo`,
+    input: kembali,
+    ikon: '↺',
+    label: tujuan.label,
+    ket: tujuan.ket,
+    attr:
+      `data-konfirmasi-tema data-judul="Undo surat jalan ${esc(noSurat(s))}?" ` +
+      `data-pesan="Status ${esc(s.status)} akan dibuka satu langkah (angka B/T/K/S tetap seperti sekarang, tidak ada data yang dihapus). Setelah dibuka, datanya bisa diperbaiki lewat alur normal." ` +
+      `data-ok="Ya, undo"`,
+  };
 };

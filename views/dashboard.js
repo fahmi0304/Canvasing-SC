@@ -11,7 +11,7 @@ function namaHari(iso) {
   if (!m) return '';
   return HARI[new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay()] || '';
 }
-const { menuBaris, attrBarisKlik } = require('./menu-baris');
+const { menuBaris, attrBarisKlik, opsiUndo } = require('./menu-baris');
 const { PLUS } = require('./ikon');
 const { kartuGrafik } = require('./grafik');
 const { noSurat } = require('../lib/kode');
@@ -43,7 +43,7 @@ const STATUS_RINGKAS = {
  * berubah (menu per statusnya diatur di `views/laporan.js → exports.hub`).
  */
 function menuPerjalanan(s, opsi) {
-  const { base, bolehHapus, bolehBuka = true } = opsi;
+  const { base, bolehHapus, bolehBuka = true, balikKe = '' } = opsi;
 
   /*
    * Opsi **"Buka" (keterangan "Lanjutkan alur perjalanan")** untuk membuka/melanjutkan perjalanan dari
@@ -80,6 +80,18 @@ function menuPerjalanan(s, opsi) {
       ket: 'terbuka di penampil PDF · 1 halaman F4',
     });
   }
+  /*
+   * UNDO untuk administrator (permintaan user: "Administrator bisa meng undo surat jalan").
+   * Satu langkah: Selesai → Sedang Rekap, Sedang Rekap → Ongoing, Ongoing → Draft. Baris yang sudah
+   * draft tidak diberi opsi ini (tidak ada yang perlu dibuka). Hanya administrator (`bolehHapus` =
+   * `auth.admin(req)` untuk menu ini).
+   */
+  if (bolehHapus) {
+    // `opsiUndo()` mengembalikan null untuk baris yang sudah draft (tidak ada yang perlu dibuka)
+    const undo = opsiUndo(s, base, balikKe);
+    if (undo) daftar.push(undo);
+  }
+
   if (bolehHapus) {
     daftar.push({
       form: `${base}/sesi/${s.id}/hapus`,
