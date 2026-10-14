@@ -103,6 +103,23 @@ function hanyaAdmin(req, res, target = '/', pesan = 'Hanya administrator yang bo
   return false;
 }
 
+/**
+ * Boleh menghapus SURAT JALAN ini? (permintaan user: *"Buat Surat jalan draft bisa di hapus admin"*,
+ * dengan keputusan pemilik aplikasi: **admin gudang & administrator**, tetapi **admin gudang HANYA untuk
+ * status draft**; administrator tetap boleh semua status).
+ *
+ * Dipakai TIGA tempat supaya hak di UI & di server tidak pernah berbeda:
+ *  - rute `POST /sesi/:id/hapus` (penjagaan sebenarnya),
+ *  - `views/sesi.js → exports.detail` (ikon Hapus di halaman perjalanan),
+ *  - `views/dashboard.js → menuPerjalanan()` (opsi "Hapus" di menu baris dasbor).
+ * Menu baris **Laporan** sengaja TETAP administrator saja (pemilik aplikasi memilih hanya dasbor &
+ * halaman perjalanan) — lihat `bolehHapus` di route `/laporan`.
+ */
+function bolehHapusSesi(req, sesi) {
+  if (auth.admin(req)) return true;
+  return auth.bolehUbah(req) && !!sesi && sesi.status === 'draft';
+}
+
 /** Sales hanya boleh melihat data (read-only). */
 function bolehUbahAtau(req, res, target = '/') {
   if (auth.bolehUbah(req)) return true;
@@ -332,7 +349,11 @@ app.get('/', (req, res) => {
         base: req.BASE,
         pesan: req.query.pesan,
         bolehUbah: auth.bolehUbah(req),
+        // administrator: boleh hapus semua status (opsi Hapus + Undo di menu baris)
         bolehHapus: auth.admin(req),
+        // admin gudang: boleh hapus HANYA surat jalan draft (permintaan user "Buat Surat jalan draft bisa
+        // di hapus admin"); aturan per statusnya dihitung di views/dashboard.js → menuPerjalanan()
+        bolehHapusDraft: auth.bolehUbah(req),
         // opsi "Buka/Lanjutkan perjalanan" di menu baris dasbor: administrator & admin gudang saja
         // (permintaan user revisi ke-140) — sales tidak. `auth.bolehUbah` = semua peran kecuali sales.
         bolehBuka: auth.bolehUbah(req),
@@ -532,6 +553,13 @@ app.get('/barang', (req, res) => {
         tampilArsip,
         jumlahArsip: q.produkArsipJumlah(),
         dipakai: q.produkDipakai(),
+        /*
+         * KOLOM "Dibawa oleh" (permintaan user: "saat nama barang di klik, muncul siapa saja yang membawa
+         * dan jumlahnya") — Map(produkId → [{ sales, qty }]) dari `q.pemetaanPembawa()`: hanya surat jalan
+         * yang BELUM selesai dengan jumlah B + T, sama dengan data halaman Rekap Stok. Informasi saja
+         * (tidak bisa diklik); nama barangnya tetap tautan ke Rekap Stok seperti sebelumnya.
+         */
+        pembawa: q.pemetaanPembawa(),
       }),
     })
   );
@@ -946,7 +974,13 @@ app.get('/sesi/:id', (req, res) => {
         // catatan otomatis "telah diambil barangnya oleh …" (kalau barang perjalanan ini diambil sales lain)
         ambilan: q.tambahanBatchDariSesi(sesi.id),
         bolehUbah: auth.bolehUbah(req),
-        bolehHapus: auth.admin(req),
+        // ikon Hapus di halaman perjalanan: administrator semua status, admin gudang hanya draft
+        // (permintaan user "Buat Surat jalan draft bisa di hapus admin") — aturannya sama dengan rute
+        // POST /sesi/:id/hapus, keduanya dari bolehHapusSesi().
+        bolehHapus: bolehHapusSesi(req, sesi),
+        // hapus PENGINPUTAN barang tambahan: administrator saja & hanya sebelum perjalanan selesai
+        // (permintaan user: "Buat Administrator bisa menghapus barang tambahan")
+        bolehHapusEntri: auth.admin(req) && sesi.status !== 'selesai',
         bolehKelolaPetugas: auth.admin(req),
       }),
     })
@@ -970,6 +1004,9 @@ app.get('/sesi/:id/overview', (req, res) => {
         tambahan: q.tambahanBatchList(sesi.id),
         rincian: rincianPerEntri(sesi.id),
         ambilan: q.tambahanBatchDariSesi(sesi.id),
+        // Overview = halaman hanya-baca, tetapi tombol hapus penginputan tetap ditampilkan untuk
+        // administrator selama perjalanannya belum selesai (permintaan user).
+        bolehHapusEntri: auth.admin(req) && sesi.status !== 'selesai',
       }),
     })
   );
@@ -999,8 +1036,20 @@ app.post('/sesi/:id/hapus', (req, res) => {
   const balikKe = String(req.body.balik || '') === '/laporan' ? '/laporan' : '/';
   const sesi = q.sesiById(Number(req.params.id));
   if (!sesi) return balik(req, res, balikKe, 'Perjalanan tidak ditemukan');
-  // permintaan user: hanya administrator yang boleh menghapus perjalanan
-  if (!hanyaAdmin(req, res, `/sesi/${sesi.id}`, terkunci(sesi) ? 'Perjalanan selesai hanya bisa dihapus administrator' : 'Hanya administrator yang boleh menghapus perjalanan')) return;
+  /*
+   * Permintaan user: "Buat Surat jalan draft bisa di hapus admin" → administrator boleh SEMUA status,
+   * admin gudang HANYA status draft (aturan lengkapnya di `bolehHapusSesi()` di atas).
+   */
+  if (!bolehHapusSesi(req, sesi)) {
+    const pesan = auth.admin(req)
+      ? `Surat jalan ${noSurat(sesi)} tidak bisa dihapus`
+      : terkunci(sesi)
+        ? 'Perjalanan selesai hanya bisa dihapus administrator'
+        : sesi.status === 'draft'
+          ? 'Hanya administrator & admin gudang yang boleh menghapus perjalanan'
+          : 'Surat jalan yang sudah diterbitkan hanya bisa dihapus administrator';
+    return balik(req, res, `/sesi/${sesi.id}`, pesan);
+  }
   const ringkas = `Surat jalan ${noSurat(sesi)} (${sesi.sales_nama || '-'}, ${sesi.tanggal}, status ${sesi.status}) dihapus`;
   const detail = q.itemBySesi(sesi.id).filter((i) => i.b + i.t + i.k > 0).map((i) => ({ nama: i.nama, kolom: 'B/T/K/S', sebelum: `${i.b}/${i.t}/${i.k}/${setoranEfektif(i)}`, sesudah: 'dihapus' }));
   q.sesiHapus(sesi.id);
@@ -1331,6 +1380,24 @@ app.post('/sesi/:id/tambahan', (req, res) => {
   let tidakAda = 0;
   let kurang = 0;
   const jalan = db().transaction(() => {
+    /*
+     * Hitung DULU berapa yang benar-benar dipotong dari tiap barang di surat jalan sumber, lalu simpan
+     * angka itu di `tambahan_item.kurangi_b`. Gunanya: kalau administrator menghapus penginputan ini,
+     * jumlah yang dikembalikan ke surat jalan sumber PERSIS seperti yang tadi dipotong (permintaan user).
+     */
+    const potongan = new Map();
+    if (target) {
+      nilai
+        .filter((x) => x.n > 0)
+        .forEach((x) => {
+          const adaB = bTarget.get(x.it.produk_id);
+          if (adaB === undefined) { tidakAda++; return; }
+          if (adaB < x.n) kurang++;
+          const potong = Math.min(adaB, x.n);
+          potongan.set(x.it.produk_id, (potongan.get(x.it.produk_id) || 0) + potong);
+          dikurangi += potong;
+        });
+    }
     entriId = q.tambahanBatchBuat({
       sesi_id: sesi.id,
       tanggal: kini.tanggal,
@@ -1342,7 +1409,9 @@ app.post('/sesi/:id/tambahan', (req, res) => {
     });
     // permintaan user: "ketika disimpan langsung terkunci" → seluruh entri perjalanan ini terkunci
     q.tambahanBatchKunciSemua(sesi.id);
-    nilai.forEach(({ it, n }) => q.tambahanItemSet(entriId, it.produk_id, it.kode, it.nama, n));
+    nilai.forEach(({ it, n }) =>
+      q.tambahanItemSet(entriId, it.produk_id, it.kode, it.nama, n, potongan.get(it.produk_id) || 0)
+    );
     // kolom T tetap AKUMULASI semua penginputan (permintaan user) — entri pengembalian dikecualikan
     // di dalam query-nya, jadi aman dipanggil di sini.
     q.tambahanSinkronKeSesi(sesi.id);
@@ -1351,15 +1420,9 @@ app.post('/sesi/:id/tambahan', (req, res) => {
       nilai.filter((x) => x.n > 0).forEach((x) => q.itemKurangiB(sesi.id, x.it.produk_id, x.n));
     }
     if (target) {
-      nilai
-        .filter((x) => x.n > 0)
-        .forEach((x) => {
-          const adaB = bTarget.get(x.it.produk_id);
-          if (adaB === undefined) { tidakAda++; return; }
-          if (adaB < x.n) kurang++;
-          q.itemKurangiB(target.id, x.it.produk_id, x.n);
-          dikurangi += Math.min(adaB, x.n);
-        });
+      potongan.forEach((potong, produkId) => {
+        if (potong > 0) q.itemKurangiB(target.id, produkId, potong);
+      });
       // jumlah yang benar-benar dikurangi dipakai untuk catatan otomatis di perjalanan sales itu
       q.tambahanBatchSetSumber(entriId, target.id, dikurangi);
     }
@@ -1421,6 +1484,107 @@ app.post('/sesi/:id/tambahan', (req, res) => {
    *    **tetap di halaman tambahan** supaya penginputan berikutnya langsung bisa diisi.
    */
   balik(req, res, mengunci ? `/sesi/${sesi.id}` : `/sesi/${sesi.id}/tambahan`, pesan);
+});
+
+/*
+ * HAPUS SATU PENGINPUTAN BARANG TAMBAHAN — administrator saja (permintaan user: "Buat Administrator bisa
+ * menghapus barang tambahan").
+ *
+ * Keputusan pemilik aplikasi:
+ *  - tombolnya **per baris penginputan** di kartu "Ekspedisi Barang" (bukan "hapus semua"), dengan popup
+ *    konfirmasi;
+ *  - angka stok **DIPULIHKAN**: barang yang tadi diambil dari surat jalan sales lain dikembalikan ke
+ *    kolom **B** surat jalan itu (persis sebesar `tambahan_item.kurangi_b`, atau `sumber_qty` berurutan
+ *    untuk entri lama), dan entri **retur** (kembali-gudang) dikembalikan ke kolom **B perjalanan ini**;
+ *  - hanya untuk surat jalan yang **belum selesai** (draft/ongoing) — yang sudah selesai tetap terkunci.
+ *
+ * Sesudah dihapus: kolom T dihitung ulang (`tambahanSinkronKeSesi`), catatan otomatis dibangun ulang di
+ * perjalanan ini & di surat jalan sumber, dan perubahannya dicatat di audit (`tambahan-dihapus`).
+ */
+app.post('/sesi/:id/tambahan/:batchId/hapus', (req, res) => {
+  const sesi = ambilSesi(req, res);
+  if (!sesi) return;
+  const balikKe = `/sesi/${sesi.id}`;
+  if (!hanyaAdmin(req, res, balikKe, 'Hanya administrator yang boleh menghapus penginputan barang tambahan')) return;
+  if (sesi.status === 'selesai') {
+    return balik(req, res, balikKe, `Surat jalan ${noSurat(sesi)} sudah SELESAI — penginputan barang tambahan tidak bisa dihapus`);
+  }
+  const batch = q.tambahanBatchById(req.params.batchId);
+  if (!batch || Number(batch.sesi_id) !== Number(sesi.id)) {
+    return balik(req, res, balikKe, 'Penginputan barang tambahan tidak ditemukan');
+  }
+  const barang = q.tambahanItemBatchSemua(batch.id).filter((b) => Number(b.qty) > 0);
+  const kembaliGudang = String(batch.sumber || '').toLowerCase() === 'kembali-gudang';
+  const sumberSesi = Number(batch.sumber_sesi_id) > 0 ? q.sesiById(Number(batch.sumber_sesi_id)) : null;
+
+  let dipulihkan = 0;      // jumlah yang dikembalikan ke surat jalan SUMBER (sales lain)
+  let dipulihkanKeSini = 0; // jumlah yang dikembalikan ke kolom B perjalanan ini (entri retur)
+  let untukCatatan = 0;
+  db().transaction(() => {
+    if (kembaliGudang) {
+      // entri retur: barangnya tadi MENGURANGI kolom B perjalanan ini → dikembalikan ke sini
+      barang.forEach((b) => {
+        q.itemTambahB(sesi.id, b.produk_id, b.qty);
+        dipulihkanKeSini += Number(b.qty) || 0;
+      });
+    } else if (sumberSesi) {
+      /*
+       * Pengambilan dari surat jalan sales lain: kembalikan ke kolom B surat jalan ITU.
+       * Dipakai angka yang benar-benar dipotong (`kurangi_b`); kalau entri itu dibuat SEBELUM kolom ini
+       * ada (kurangi_b masih 0 semua) sedangkan `sumber_qty` terisi, angka itu dibagikan berurutan
+       * sampai habis — total yang dikembalikan tetap sama dengan yang dulu dipotong.
+       */
+      const tercatat = barang.reduce((a, b) => a + (Number(b.kurangi_b) || 0), 0);
+      let sisa = Math.max(0, Number(batch.sumber_qty) || 0);
+      barang.forEach((b) => {
+        const qty = Number(b.qty) || 0;
+        const ambil = tercatat > 0 ? Number(b.kurangi_b) || 0 : Math.min(qty, sisa);
+        if (tercatat === 0) sisa -= ambil;
+        if (ambil > 0) {
+          q.itemTambahB(sumberSesi.id, b.produk_id, ambil);
+          dipulihkan += ambil;
+        }
+      });
+    }
+    untukCatatan = barang.reduce((a, b) => a + Number(b.qty || 0), 0);
+    q.tambahanBatchHapus(batch.id);
+    /*
+     * Kolom nilai (B/T) diperbaiki setelah entri hilang: T dihitung ulang dari entri yang tersisa, dan
+     * kolom S dihitung ulang juga (S_efektif mengikuti B/T/K — lihat `itemTotals`). Untuk entri retur,
+     * B yang dikembalikan di atas sudah benar; sedangkan pengambilan dari gudang tidak menyentuh B.
+     */
+    q.tambahanSinkronKeSesi(sesi.id);
+  })();
+
+  segarkanCatatan(sesi.id);
+  if (sumberSesi) {
+    segarkanCatatan(sumberSesi.id);
+    if (dipulihkan > 0) {
+      audit(req, 'barang-diambil-sales-dibatalkan', 'sesi', sumberSesi.id,
+        `Penginputan barang tambahan dibatalkan oleh administrator — ${angka(dipulihkan)} barang dikembalikan ke kolom Dibawa (surat jalan ${noSurat(sesi)})`,
+        [{ kolom: 'Dikembalikan ke B', sesudah: dipulihkan }]);
+    }
+  }
+  audit(req, 'tambahan-dihapus', 'sesi', sesi.id,
+    `Penginputan barang tambahan ${batch.tanggal} ${batch.jam_mulai} DIHAPUS (${untukCatatan} barang, sumber ${
+      kembaliGudang ? 'Gudang (retur)' : sumberSesi ? `${noSurat(sumberSesi)} (sales ${batch.sumber})` : 'Gudang'
+    })` +
+      (dipulihkanKeSini ? ` · ${angka(dipulihkanKeSini)} barang dikembalikan ke kolom Dibawa perjalanan ini`
+        : dipulihkan ? ` · ${angka(dipulihkan)} barang dikembalikan ke kolom Dibawa ${noSurat(sumberSesi)}` : ''),
+    [
+      { kolom: 'Penginputan', sebelum: `${tanggalPendek(batch.tanggal)} ${batch.jam_mulai}`, sesudah: '(dihapus)' },
+      { kolom: 'Jumlah', sebelum: untukCatatan, sesudah: 0 },
+      { kolom: 'Dipulihkan', sesudah: dipulihkanKeSini ? `B perjalanan ini +${dipulihkanKeSini}` : dipulihkan ? `B ${noSurat(sumberSesi)} +${dipulihkan}` : '-' },
+    ]);
+
+  const pesan =
+    `Penginputan ${tanggalPendek(batch.tanggal)} ${batch.jam_mulai} (${angka(untukCatatan)} barang) dihapus` +
+    (dipulihkanKeSini
+      ? ` · ${angka(dipulihkanKeSini)} barang dikembalikan ke kolom Dibawa (B) perjalanan ini`
+      : dipulihkan
+        ? ` · ${angka(dipulihkan)} barang dikembalikan ke kolom Dibawa (B) surat jalan ${noSurat(sumberSesi)}`
+        : '');
+  balik(req, res, balikKe, pesan);
 });
 
 /*
@@ -1889,9 +2053,10 @@ function dataRekapStok() {
  * semua stok, tapi stok yang dipilih, ada ikon pilih barang".
  * `?barang=<id>` = barang yang ditampilkan (klik nama barang di Inventory juga mengarah ke sini);
  * tanpa parameter itu halaman menampilkan petunjuk untuk memilih barang dulu.
- * Kolom Stok Fisik & Stok Kledo diisi di layar dan Selisih dihitung browser; isiannya TIDAK disimpan.
- * Yang DISIMPAN adalah hasil yang sudah ditekan Fix (tabel `stok_fix`) dan daftarnya SELALU tampil di
- * bawah tabel — termasuk untuk barang yang sudah diganti (permintaan user terbaru).
+ * Kolom **Total Stok di Sales** terisi otomatis dari data sales; **Total Stok di Gudang** & **Stok Kledo**
+ * diisi di layar dan Selisih dihitung browser (Total Stok di Sales + Total Stok di Gudang - Stok Kledo);
+ * isiannya TIDAK disimpan. Yang DISIMPAN adalah hasil yang sudah ditekan Fix (tabel `stok_fix`) dan
+ * daftarnya SELALU tampil di bawah tabel — termasuk untuk barang yang sudah diganti (permintaan user).
  */
 app.get('/rekap-stok', (req, res) => {
   const data = dataRekapStok();
@@ -1918,10 +2083,9 @@ app.get('/rekap-stok', (req, res) => {
          * DAFTAR "Hasil Rekap" = SELURUH hasil fix, bukan hanya barang yang sedang dibuka (permintaan
          * user: "Barang yang sudah di fix kan, tetap muncul di halaman rekap stok meski ganti barang lain
          * untuk di rekap"). Datanya tersimpan di tabel `stok_fix`, jadi berpindah barang tidak
-         * menghilangkannya. `hasilBarang` dipakai untuk menandai baris barang yang sedang dibuka.
+         * menghilangkannya. Cetak PDF-nya juga satu saja: semua barang yang sudah difix.
          */
         hasil: q.stokFixSemua(),
-        hasilBarang: barang ? q.stokFixByProduk(barang.id) : [],
         bolehUbah: auth.bolehUbah(req),
         base: req.BASE,
         pesan: req.query.pesan,
@@ -1935,39 +2099,46 @@ app.get('/rekap-stok', (req, res) => {
  * FIX HASIL REKAP STOK (permintaan user: "ada tombol fix, setelah tekan fix, hasil rekap pindah ke bawah,
  * cetak pdf itu data yang sudah fix").
  *
- * Angka stok tiap sales TIDAK dipercaya dari browser — dihitung ulang di sini dari `q.rekapStokSales()`
- * (surat jalan yang belum selesai), lalu disimpan bersama Stok Fisik & Stok Kledo yang dikirim petugas.
- * Selisih = Stok di Sales + Stok Fisik - Stok Kledo (rumus permintaan user, dihitung di server).
- * Sesudah tersimpan, halaman dialihkan kembali ke barang yang sama — hasilnya muncul di daftar
- * "Hasil Rekap" DI BAWAH tabel (dan itulah yang dicetak PDF).
+ * Angka **Total Stok di Sales** TIDAK dipercaya dari browser — dihitung ulang di sini dari
+ * `q.rekapStokSales()` (surat jalan yang belum selesai), lalu disimpan bersama **Total Stok di Gudang** &
+ * **Stok Kledo** yang dikirim petugas.
+ * **Selisih = Total Stok di Sales + Total Stok di Gudang - Stok Kledo** (rumus permintaan user revisi
+ * ke-168, dihitung di server). Sesudah tersimpan, halaman dialihkan kembali ke barang yang sama —
+ * hasilnya muncul di daftar "Hasil Rekap" DI BAWAH tabel (dan itulah yang dicetak PDF).
+ *
+ * Isian `gudang` juga diterima dengan nama lama `fisik` (halaman yang masih terbuka dari versi lama bisa
+ * mengirim field itu) — jangan dihapus tanpa alasan.
  */
 app.post('/rekap-stok/fix', (req, res) => {
   const produkId = Number(req.body.produk_id || 0) || 0;
   const p = q.produkById(produkId);
   if (!p) return balik(req, res, '/rekap-stok', 'Barang tidak ditemukan');
-  const fisik = Math.max(0, Number(req.body.fisik || 0) || 0);
+  // isian "Total Stok di Gudang" — field-nya `gudang`; `fisik` masih diterima untuk halaman versi lama
+  const kirimGudang = req.body.gudang !== undefined ? req.body.gudang : req.body.fisik;
+  const teksGudang = String(kirimGudang === undefined || kirimGudang === null ? '' : kirimGudang).trim();
+  const gudang = Math.max(0, Number(teksGudang || 0) || 0);
   const kledo = Math.max(0, Number(req.body.kledo || 0) || 0);
-  if (!String(req.body.fisik || '').trim() && !String(req.body.kledo || '').trim()) {
-    return balik(req, res, `/rekap-stok?barang=${produkId}`, 'Isi Stok Fisik dan/atau Stok Kledo dulu sebelum menekan Fix');
+  if (!teksGudang && !String(req.body.kledo || '').trim()) {
+    return balik(req, res, `/rekap-stok?barang=${produkId}`, 'Isi Total Stok di Gudang dan/atau Stok Kledo dulu sebelum menekan Fix');
   }
   const data = dataRekapStok();
   const nilai = data.matriks[produkId] || {};
   const rinci = data.sales.map((nama) => ({ nama, qty: Number(nilai[String(nama).trim().toLowerCase()] || 0) }));
   const totalSales = rinci.reduce((a, r) => a + r.qty, 0);
-  const selisih = totalSales + fisik - kledo;
+  const selisih = totalSales + gudang - kledo;
   q.stokFixTambah({
     produk_id: p.id,
     kode: p.kode,
     nama: p.nama,
     sales_json: JSON.stringify(rinci),
     total_sales: totalSales,
-    fisik,
+    gudang,
     kledo,
     selisih,
     petugas: (req.petugas && req.petugas.nama) || '',
   });
   audit(req, 'stok-difix', 'produk', p.id,
-    `Rekap stok ${p.kode} · ${p.nama} difix (Stok di Sales ${totalSales} + Fisik ${fisik} - Kledo ${kledo} = Selisih ${selisih})`);
+    `Rekap stok ${p.kode} · ${p.nama} difix (Total Stok di Sales ${totalSales} + Total Stok di Gudang ${gudang} - Stok Kledo ${kledo} = Selisih ${selisih})`);
   balik(req, res, `/rekap-stok?barang=${produkId}`, `Hasil rekap ${p.nama} disimpan (Selisih ${selisih}) — masuk daftar Hasil Rekap di bawah`);
 });
 
@@ -1984,6 +2155,63 @@ app.post('/rekap-stok/fix/hapus', (req, res) => {
 });
 
 /*
+ * HAPUS SEMUA HASIL REKAP STOK (revisi ke-173) — permintaan user: *"beri tombol hapus semua hasil rekap
+ * … admin dan adminisrator bisa menghapus"*.
+ *
+ * Keputusan pemilik aplikasi: tombolnya di **kepala kartu "Hasil Rekap"** (bersama "Hapus hasil barang
+ * ini") dan konfirmasinya memakai **popup bertema yang menyebut JUMLAH barisnya**; yang boleh menghapus
+ * = **administrator & admin gudang** — dijaga `bolehUbahAtau()` (peran sales ditahan lebih dulu oleh
+ * middleware peran, karena ini POST).
+ *
+ * Waktu (tanggal/jam) TIDAK dicatat per baris & tidak dikosongkan (kolomnya memang tidak ada — permintaan
+ * user sebelumnya: "tidak usah waktu fix"), jadi tidak ada cap waktu yang tertinggal. Baris PDF/daftar
+ * langsung kosong sesudahnya, dan tiap baris yang hilang tercatat di audit (`stok-fix-dihapus` per baris
+ * supaya jejaknya tetap lengkap) + satu ringkasan `stok-fix-semua-dihapus`.
+ */
+app.post('/rekap-stok/fix/hapus-semua', (req, res) => {
+  if (!bolehUbahAtau(req, res, '/rekap-stok')) return;
+  const semua = q.stokFixSemua();
+  const balikKe = Number(req.body.produk_id || 0) || 0;
+  const tujuan = balikKe ? `/rekap-stok?barang=${balikKe}` : '/rekap-stok';
+  if (!semua.length) return balik(req, res, tujuan, 'Tidak ada hasil rekap yang bisa dihapus');
+  semua.forEach((h) => {
+    q.stokFixHapus(h.id);
+    audit(req, 'stok-fix-dihapus', 'produk', h.produk_id, `Hasil rekap stok ${h.nama} dibatalkan (selisih ${h.selisih}) — bagian dari hapus semua`);
+  });
+  const barangUnik = new Set(semua.map((h) => Number(h.produk_id))).size;
+  audit(req, 'stok-fix-semua-dihapus', 'produk', 0,
+    `SEMUA hasil rekap stok dihapus: ${angka(semua.length)} baris dari ${angka(barangUnik)} barang`,
+    [
+      { kolom: 'Baris dihapus', sebelum: semua.length, sesudah: 0 },
+      { kolom: 'Jumlah barang', sebelum: barangUnik, sesudah: 0 },
+    ]);
+  balik(req, res, tujuan, `Semua hasil rekap dihapus (${angka(semua.length)} baris dari ${angka(barangUnik)} barang) — daftar & PDF-nya sekarang kosong`);
+});
+
+/*
+ * HAPUS HASIL REKAP SATU BARANG (revisi ke-173) — permintaan user: *"Hapus hasil barang ini"*.
+ * Menghapus SEMUA baris hasil rekap milik satu barang (barang yang sedang dibuka), bukan satu baris —
+ * untuk satu baris sudah ada tombol ikon sampah di ujung barisnya.
+ */
+app.post('/rekap-stok/fix/hapus-barang', (req, res) => {
+  if (!bolehUbahAtau(req, res, '/rekap-stok')) return;
+  const produkId = Number(req.body.produk_id || 0) || 0;
+  const p = produkId ? q.produkById(produkId) : null;
+  const tujuan = produkId ? `/rekap-stok?barang=${produkId}` : '/rekap-stok';
+  if (!p) return balik(req, res, '/rekap-stok', 'Barang tidak ditemukan');
+  const milik = q.stokFixByProduk(p.id);
+  if (!milik.length) return balik(req, res, tujuan, `Belum ada hasil rekap untuk ${p.nama}`);
+  milik.forEach((h) => {
+    q.stokFixHapus(h.id);
+    audit(req, 'stok-fix-dihapus', 'produk', h.produk_id, `Hasil rekap stok ${h.nama} dibatalkan (selisih ${h.selisih}) — bagian dari hapus hasil barang ini`);
+  });
+  audit(req, 'stok-fix-barang-dihapus', 'produk', p.id,
+    `Semua hasil rekap stok ${p.kode} · ${p.nama} dihapus (${angka(milik.length)} baris)`,
+    [{ kolom: 'Baris dihapus', sebelum: milik.length, sesudah: 0 }]);
+  balik(req, res, tujuan, `Hasil rekap ${p.nama} dihapus semua (${angka(milik.length)} baris)`);
+});
+
+/*
  * REKAP STOK -> berkas PDF yang berisi **HANYA DATA YANG SUDAH DIFIX** (permintaan user).
  * `?barang=<id>` = hasil fix barang itu, `?semua=1` = seluruh hasil fix dari semua barang.
  * Dibuat `lib/rekapStok.js` dengan penulis PDF yang sama, tanpa pustaka baru.
@@ -1997,7 +2225,12 @@ app.get('/cetak/rekap-stok-pdf', (req, res) => {
     : null;
   if (!semua && !barang) return balik(req, res, '/rekap-stok', 'Pilih barangnya dulu sebelum mencetak rekap stok');
   const hasil = semua ? q.stokFixSemua() : q.stokFixByProduk(barang.id);
-  const pdf = rekapStokPdf({ hasil, sales: data.sales, semua });
+  /*
+   * Blok tanda tangan PDF rekap stok mencetak **nama petugas yang MENCETAK** (`req.petugas.nama`) —
+   * permintaan user: "TTD diperiksa itu nama yang mencetak". Ini SENGAJA berbeda dari dokumen surat
+   * jalan/memo yang memakai nama penginput (`namaAdminSesi`); alasannya ada di lib/rekapStok.js.
+   */
+  const pdf = rekapStokPdf({ hasil, sales: data.sales, semua, namaCetak: (req.petugas && req.petugas.nama) || '' });
   const nama = semua ? 'Rekap Stok (semua barang difix)' : `Rekap Stok ${String(barang.kode || '').replace(/[^\w.-]+/g, '-')}`;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `${req.query.unduh === '1' ? 'attachment' : 'inline'}; filename="${nama}.pdf"`);

@@ -51,9 +51,15 @@ function labelSumber(t) {
  * Permintaan user: keterangan di bawah judul
  * (bagian yang menjelaskan bahwa catatannya otomatis & terkunci) DIHAPUS — jangan dihidupkan lagi.
  * `tambahan` = daftar entri (tambahan_batch) milik perjalanan ini; `rincian` = Map(batch_id → barang).
+ *
+ * **`opts.hapusEntri`** (revisi ke-170, permintaan user "Buat Administrator bisa menghapus barang
+ * tambahan"): kalau `{ base, boleh }` diberikan dan `boleh` true (administrator & perjalanan belum
+ * selesai), setiap baris penginputan mendapat **tombol hapus** dengan popup konfirmasi bertema. Tombolnya
+ * `<button>` di dalam `<form>`, jadi kliknya DIIABAIKAN oleh handler klik-baris (`pasangRinciBaris`).
  */
-function kartuPengambilan({ base, sesi, tambahan = [], rincian = new Map() }) {
+function kartuPengambilan({ base, sesi, tambahan = [], rincian = new Map(), hapusEntri = null }) {
   const total = tambahan.reduce((a, b) => a + (b.total || 0), 0);
+  const bolehHapusEntri = !!(hapusEntri && hapusEntri.boleh);
   /*
    * Permintaan user (revisi ke-137):
    *  - "tanggal hanya cantumkan 1 kali di expedisi, cukup jam saja …, jika tanggal pengambilan berbeda,
@@ -87,15 +93,31 @@ function kartuPengambilan({ base, sesi, tambahan = [], rincian = new Map() }) {
       let kepalaTanggal = '';
       if (t.tanggal !== tanggalTerakhir) {
         tanggalTerakhir = t.tanggal;
-        kepalaTanggal = `<tr class="baris-tanggal" data-tanggal-pisah="${esc(t.tanggal)}"><td colspan="3">${esc(tanggalLengkap(t.tanggal))}</td></tr>`;
+        kepalaTanggal = `<tr class="baris-tanggal" data-tanggal-pisah="${esc(t.tanggal)}"><td colspan="${bolehHapusEntri ? 4 : 3}">${esc(tanggalLengkap(t.tanggal))}</td></tr>`;
       }
+      /*
+       * Tombol hapus penginputan (administrator, perjalanan belum selesai) — memakai popup konfirmasi
+       * bertema `[data-konfirmasi-tema]` yang sudah ada di `public/app.js`, jadi tidak perlu skrip baru.
+       * Ikonnya **ikon sampah** (`HAPUS`, sama dengan tombol hapus lainnya) — permintaan user revisi
+       * ke-172: *"Tombol hapus di expedisi barang juga gunakan logo sampah"* (sebelumnya karakter "✕").
+       */
+      const selHapus = bolehHapusEntri
+        ? `<td class="aksi-sel"><form method="post" action="${base}/sesi/${sesi.id}/tambahan/${t.id}/hapus" class="form-hapus-entri">
+        <button class="ttk-tombol ttk-hapus" type="submit" data-konfirmasi-tema title="Hapus penginputan ini"
+          aria-label="Hapus penginputan ${esc(t.jam_mulai)}"
+          data-judul="Hapus penginputan ${esc(t.jam_mulai)}?"
+          data-pesan="Penginputan ${esc(tanggalLengkap(t.tanggal))} jam ${esc(t.jam_mulai)} (${angka(t.total)} barang) akan dihapus. Angka stoknya DIPULIHKAN: barang yang tadi diambil dikembalikan ke surat jalan sumbernya, dan barang retur dikembalikan ke kolom Dibawa perjalanan ini."
+          data-ok="Ya, hapus">${HAPUS}</button>
+      </form></td>`
+        : '';
       return `${kepalaTanggal}<tr data-batch="${t.id}" data-tanggal="${esc(t.tanggal)}" data-jam="${esc(t.jam_mulai)}" data-sumber="${esc(t.sumber || 'gudang')}"
           class="baris-rinci-klik" data-rinci-baris="${idRinci}" tabindex="0" role="button" aria-expanded="false" aria-controls="${idRinci}">
         <td class="kode">${esc(t.jam_mulai)}</td>
         <td>${esc(labelSumber(t))}${t.sumber_sesi_id ? ` <small class="kode">(dikurangi ${angka(t.sumber_qty)})</small>` : ''}</td>
         <td class="num">${angka(t.total)}</td>
+        ${selHapus}
       </tr>
-      <tr class="baris-rinci" id="${idRinci}" data-rinci-detail hidden><td colspan="3">${rinci}</td></tr>`;
+      <tr class="baris-rinci" id="${idRinci}" data-rinci-detail hidden><td colspan="${bolehHapusEntri ? 4 : 3}">${rinci}</td></tr>`;
     })
     .join('');
   return `
@@ -110,9 +132,9 @@ function kartuPengambilan({ base, sesi, tambahan = [], rincian = new Map() }) {
     tambahan.length
       ? `<div class="tbl-wrap" style="max-height:420px;overflow:auto">
     <table class="tbl rapat tbl-pekat tbl-tengah" id="tblPengambilan">
-      <thead><tr><th>Jam</th><th>Keterangan</th><th class="num">Qty</th></tr></thead>
+      <thead><tr><th>Jam</th><th>Keterangan</th><th class="num">Qty</th>${bolehHapusEntri ? '<th class="aksi-sel" aria-label="Aksi"></th>' : ''}</tr></thead>
       <tbody>${baris}</tbody>
-      <tfoot><tr><td colspan="2"><b>Total barang bergerak</b></td><td class="num"><b>${angka(total)}</b></td></tr></tfoot>
+      <tfoot><tr><td colspan="2"><b>Total barang bergerak</b></td><td class="num"><b>${angka(total)}</b></td>${bolehHapusEntri ? '<td class="aksi-sel"></td>' : ''}</tr></tfoot>
     </table>
   </div>
   <div class="cetak-memo-baris">
@@ -321,7 +343,7 @@ function kotakRekap(tot, selisih, { base, sesi, bolehUbah }) {
   return `<div class="kotak-info${waspada}">${isi(ket)}</div>`;
 }
 
-exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, bolehHapus = true, tambahan = [], rincian = new Map(), ambilan = [] }) {
+exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, bolehHapus = true, tambahan = [], rincian = new Map(), ambilan = [], bolehHapusEntri = false }) {
   const tot = { b: 0, t: 0, k: 0, s: 0 };
   items.forEach((i) => {
     tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i);
@@ -453,7 +475,7 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
   // Catatan pengambilan barang (permintaan user): daftar TERKUNCI per penginputan (tanggal · jam ·
   // diambil dari gudang/sales lain · jumlah) beserta rincian barangnya + View Memo PDF. Tampil di
   // halaman perjalanan & Overview untuk semua status — lihat kartuPengambilan().
-  const kartuAmbil = kartuPengambilan({ base, sesi, tambahan, rincian });
+  const kartuAmbil = kartuPengambilan({ base, sesi, tambahan, rincian, hapusEntri: { boleh: bolehHapusEntri } });
 
   // Tulisan "barang dibawa sudah dikunci" ditaruh di PALING BAWAH halaman (permintaan user)
   const pesanKunci =
@@ -503,7 +525,7 @@ ${pesanKunci}`;
 };
 
 /** OVERVIEW — tampilan laporan perjalanan (hanya baca) + opsi cetak. */
-exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian = new Map(), ambilan = [] }) {
+exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian = new Map(), ambilan = [], bolehHapusEntri = false }) {
   /*
    * Permintaan user (revisi ke-136) — Overview laporan:
    *  - "juga otomatis urut barang a-z"  → daftar disusun A–Z (urutNama, sama seperti dokumen cetak);
@@ -520,12 +542,30 @@ exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian 
     tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i);
   });
   const selisih = tot.b + tot.t - tot.k - tot.s;
+  /*
+   * Permintaan user terbaru: *"Pada overview laporan selesai, tampilkan b,t,k,s nya"* — jadi **khusus
+   * status `selesai`** kotak ringkasan & kolom tabelnya memakai **B · T · K · S** (K & S baru terisi
+   * setelah rekap selesai). Status lain (draft/kirim/rekap) TETAP seperti revisi ke-136: kotak
+   * **B · T · Total** dan tabel **Nama Barang · B · T · Total**, karena K masih 0 sebelum direkap —
+   * jangan ubah bagian itu tanpa permintaan baru.
+   */
+  const selesai = sesi.status === 'selesai';
 
-  // Permintaan user: tidak ada kolom NO/Kode/K — cukup Nama Barang + B + T + Total.
-  // "kolom b,t, dan total rata tengah" → kelas `tengah` pada th & td (menang atas `.num` yang rata kanan).
+  /*
+   * Kolom NO/Kode tetap TIDAK ditampilkan. Untuk status selesai: B & T dikosongkan bila 0 (persis kertas),
+   * sedangkan K & S selalu ditulis angkanya — sama seperti dokumen F4.
+   */
   const baris = ada
-    .map(
-      (i) => `<tr data-kode="${esc(i.kode)}">
+    .map((i) =>
+      selesai
+        ? `<tr data-kode="${esc(i.kode)}">
+        <td>${esc(i.nama)}</td>
+        <td class="num tengah">${i.b || ''}</td>
+        <td class="num tengah">${i.t || ''}</td>
+        <td class="num tengah">${angka(i.k)}</td>
+        <td class="num tengah">${angka(setoranEfektif(i))}</td>
+      </tr>`
+        : `<tr data-kode="${esc(i.kode)}">
         <td>${esc(i.nama)}</td>
         <td class="num tengah">${i.b || ''}</td>
         <td class="num tengah">${i.t || ''}</td>
@@ -547,22 +587,33 @@ exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian 
 ${kepalaPerjalanan(sesi, `<span class="pjl-extra">Overview laporan</span>`, '', { geserKembali: base + '/', ikonAtas: ikonAudit })}
 ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
 
-<div class="info-kotak tiga" style="margin-bottom:20px">
+${
+  selesai
+    ? `<div class="info-kotak" style="margin-bottom:20px">
+  <div class="kotak-info"><div class="label">B</div><div class="value">${angka(tot.b)}</div><div class="note">dibawa</div></div>
+  <div class="kotak-info"><div class="label">T</div><div class="value">${angka(tot.t)}</div><div class="note">tambahan</div></div>
+  <div class="kotak-info"><div class="label">K</div><div class="value">${angka(tot.k)}</div><div class="note">kembali</div></div>
+  <div class="kotak-info${selisih === 0 ? '' : ' kotak-waspada'}"><div class="label">S</div><div class="value">${angka(tot.s)}</div><div class="note">${selisih === 0 ? 'jumlah barang' : `jumlah barang · selisih ${angka(selisih)}`}</div></div>
+</div>`
+    : `<div class="info-kotak tiga" style="margin-bottom:20px">
   <div class="kotak-info"><div class="label">B</div><div class="value">${angka(tot.b)}</div><div class="note">dibawa</div></div>
   <div class="kotak-info"><div class="label">T</div><div class="value">${angka(tot.t)}</div><div class="note">tambahan</div></div>
   <div class="kotak-info${selisih === 0 ? '' : ' kotak-waspada'}"><div class="label">Total</div><div class="value">${angka(tot.s)}</div><div class="note">${selisih === 0 ? 'jumlah barang' : `jumlah barang · selisih ${angka(selisih)}`}</div></div>
-</div>
+</div>`
+}
 
 <div class="card" style="margin-bottom:22px">
   <h2 class="card-title-heading">Daftar Barang Dibawa</h2>
   <div class="tbl-wrap" style="max-height:520px;overflow:auto">
     <table class="tbl rapat tbl-pekat">
-      <thead><tr><th>Nama Barang</th><th class="num tengah">B</th><th class="num tengah">T</th><th class="num tengah">Total</th></tr></thead>
-      <tbody>${baris || '<tr><td colspan="4" class="kosong">Belum ada barang yang dibawa di perjalanan ini.</td></tr>'}</tbody>
+      <thead><tr><th>Nama Barang</th><th class="num tengah">B</th><th class="num tengah">T</th>${
+        selesai ? '<th class="num tengah">K</th><th class="num tengah">S</th>' : '<th class="num tengah">Total</th>'
+      }</tr></thead>
+      <tbody>${baris || `<tr><td colspan="${selesai ? 5 : 4}" class="kosong">Belum ada barang yang dibawa di perjalanan ini.</td></tr>`}</tbody>
     </table>
   </div>
 </div>
-${kartuPengambilan({ base, sesi, tambahan, rincian })}
+${kartuPengambilan({ base, sesi, tambahan, rincian, hapusEntri: { boleh: bolehHapusEntri } })}
 ${kartuCatatan({ base, sesi })}`;
 };
 

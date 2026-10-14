@@ -793,6 +793,94 @@
 
   window.SC = { base: BASE, toast, flash, pasang, konfirmasi, pilih, geserHalaman, segarkanBaris: segarkanSemuaBaris };
 
+  /*
+   * ---- RINCIAN PEMBAWA BARANG (permintaan user) ----
+   * *"Munculkan rincian yang membawa Saat nama barang di klik saja"* — di halaman Inventory, nama barang
+   * membawa `data-pembawa` (JSON [{s: nama sales, q: jumlah}]) dan `data-barang`. Klik nama barang =
+   * popup daftar pembawa (nama + jumlah) dengan satu tombol **Tutup**; kalau tidak ada pembawa, muncul
+   * keterangan "Belum ada sales yang membawa barang ini". Jalan ke halaman Rekap Stok dipindah ke menu
+   * aksi baris (opsi "Rekap Stok") — jadi klik nama barang TIDAK berpindah halaman (kecuali JavaScript
+   * mati: tautannya tetap mengarah ke Rekap Stok sebagai cadangan).
+   */
+  (function pasangPembawa() {
+    const el = (tag, kelas, teks) => {
+      const n = document.createElement(tag);
+      if (kelas) n.className = kelas;
+      if (teks !== undefined) n.textContent = teks;
+      return n;
+    };
+    function popupPembawa(namaBarang, orang) {
+      const lapis = el('div', 'konfirmasi-lapis');
+      const kotak = el('div', 'konfirmasi-kotak card');
+      kotak.setAttribute('role', 'dialog');
+      kotak.setAttribute('aria-modal', 'true');
+      kotak.setAttribute('aria-label', 'Rincian pembawa ' + namaBarang);
+      kotak.appendChild(el('h2', 'pembawa-judul', 'Dibawa oleh'));
+      kotak.appendChild(el('p', 'card-hint pembawa-sub', namaBarang));
+      if (orang.length) {
+        const tabel = el('table', 'tbl rapat pembawa-tabel');
+        const thead = el('thead');
+        const trh = el('tr');
+        trh.appendChild(el('th', '', 'Nama Sales'));
+        trh.appendChild(el('th', 'num tengah', 'Jumlah'));
+        thead.appendChild(trh);
+        const tbody = el('tbody');
+        orang.forEach((o) => {
+          const tr = el('tr');
+          tr.setAttribute('data-sales', o.s);
+          tr.setAttribute('data-qty', String(o.q));
+          tr.appendChild(el('td', '', o.s || 'Tanpa nama'));
+          tr.appendChild(el('td', 'num tengah', String(o.q)));
+          tbody.appendChild(tr);
+        });
+        tabel.appendChild(thead);
+        tabel.appendChild(tbody);
+        const total = orang.reduce((a, o) => a + (Number(o.q) || 0), 0);
+        const tfoot = el('tfoot');
+        const trf = el('tr');
+        trf.appendChild(el('td', '', 'Total'));
+        trf.appendChild(el('td', 'num tengah', String(total)));
+        tfoot.appendChild(trf);
+        tabel.appendChild(tfoot);
+        kotak.appendChild(tabel);
+      } else {
+        kotak.appendChild(el('p', 'card-hint pembawa-kosong', 'Belum ada sales yang membawa barang ini'));
+      }
+      const aksi = el('div', 'konfirmasi-aksi');
+      const tutup = el('button', 'btn btn-primary', 'Tutup');
+      tutup.type = 'button';
+      aksi.appendChild(tutup);
+      kotak.appendChild(aksi);
+      lapis.appendChild(kotak);
+      document.body.appendChild(lapis);
+      setTimeout(() => tutup.focus(), 30);
+      const beres = () => {
+        document.removeEventListener('keydown', onKey, true);
+        lapis.remove();
+      };
+      function onKey(ev) {
+        if (ev.key === 'Escape' || ev.keyCode === 27 || ev.key === 'Enter' || ev.keyCode === 13) {
+          ev.stopPropagation();
+          beres();
+        }
+      }
+      tutup.addEventListener('click', beres);
+      lapis.addEventListener('click', (ev) => { if (ev.target === lapis) beres(); });
+      document.addEventListener('keydown', onKey, true);
+    }
+
+    document.addEventListener('click', (ev) => {
+      const a = ev.target.closest('[data-pembawa]');
+      if (!a) return;
+      // menu baris / tombol lain di dalam baris jangan ikut memicu popup ini
+      if (ev.target.closest('[data-ttk], [data-ttk-menu], [data-cetak]')) return;
+      ev.preventDefault();
+      let orang = [];
+      try { orang = JSON.parse(a.getAttribute('data-pembawa') || '[]') || []; } catch (e) { orang = []; }
+      popupPembawa(a.getAttribute('data-barang') || '', orang);
+    });
+  })();
+
   /* ---- menu utama (tiga garis / logo): berisi tautan halaman + tombol login & keluar ---- */
   /* ---- menu tiga garis (pojok kanan): Dasbor + menu kotak + Setting ---- */
   /* ---- logo (kiri): keterangan "Masuk sebagai" + Keluar ---- */
@@ -936,7 +1024,13 @@
     // tutup menu baris / menu melayang lain dulu supaya dialog konfirmasi TIDAK terhalang
     // (`window.SC.tutupMenuBaris` diekspos pasangMenuBaris; menu lain menutup sendiri lewat klik luar)
     if (window.SC && typeof window.SC.tutupMenuBaris === 'function') window.SC.tutupMenuBaris();
-    const form = b.closest('form');
+    /*
+     * Form milik tombolnya. Dipakai `b.form` DULU — properti itu mengembalikan form yang mengasosiasikan
+     * tombol ini, baik lewat pembungkusan maupun lewat atribut `form="…"`; sedangkan `closest('form')`
+     * hanya menemukan yang membungkus. Ini yang membuat tombol di KEPALA kartu (di luar tabel/form, mis.
+     * hapus semua hasil rekap di halaman Rekap Stok) tetap bisa memicu pengiriman.
+     */
+    const form = b.form || b.closest('form');
     const jalan = () => {
       if (form) {
         /*
@@ -1237,12 +1331,12 @@
    * ditambah: kotak cari yang menyaring daftar, menutup saat klik di luar / `Esc`, dan menggulung daftar
    * ke barang yang sedang dipilih supaya langsung terlihat.
    *
-   * Kolom **Selisih** = **Stok di Sales + Stok Fisik - Stok Kledo** (permintaan user revisi ke-161),
-   * di mana "Stok di Sales" = jumlah seluruh kolom sales baris itu (atribut `data-total-sales` dari
-   * server). Dihitung ulang setiap kali kotak isian berubah dan
-   * **TIDAK disimpan** (permintaan user: cukup diisi & dilihat di layar) — jadi tidak ada satu pun
-   * permintaan ke server. Selisih yang bukan 0 diberi tanda merah, sel yang masih kosong ditulis garis
-   * datar supaya jelas belum dihitung.
+   * Kolom **Selisih** = **Total Stok di Sales + Total Stok di Gudang - Stok Kledo** (permintaan user
+   * revisi ke-168), di mana "Total Stok di Sales" = jumlah seluruh kolom sales baris itu (atribut
+   * `data-total-sales` dari server, juga ditampilkan sebagai kolom sendiri). Dihitung ulang setiap kali
+   * kotak isian berubah dan **TIDAK disimpan** (permintaan user: cukup diisi & dilihat di layar) — jadi
+   * tidak ada satu pun permintaan ke server. Selisih yang bukan 0 diberi tanda merah, sel yang masih
+   * kosong ditulis garis datar supaya jelas belum dihitung.
    */
   (function pasangRekapStok() {
     const tabel = document.getElementById('tblStok');
@@ -1260,43 +1354,46 @@
         const sel = tr.querySelector('[data-selisih]');
         if (!sel) return;
         const sales = parseInt(tr.getAttribute('data-total-sales'), 10) || 0;
-        const fisik = angkaIsian(tr.querySelector('[data-fisik]'));
+        const gudang = angkaIsian(tr.querySelector('[data-gudang]'));
         const kledo = angkaIsian(tr.querySelector('[data-kledo]'));
-        if (fisik === null && kledo === null) {
+        if (gudang === null && kledo === null) {
           sel.textContent = '\u2014';
           sel.classList.remove('ada-selisih');
           return;
         }
-        // Selisih = Stok di Sales + Stok Fisik - Stok Kledo (permintaan user)
-        // Selisih = Stok di Sales + Stok Fisik - Stok Kledo (permintaan user)
-        const beda = sales + (fisik || 0) - (kledo || 0);
+        /*
+         * Selisih = **Total Stok di Sales + Total Stok di Gudang - Stok Kledo** (rumus permintaan user
+         * revisi ke-168). Nilai "Total Stok di Sales" diambil dari `data-total-sales` yang dihitung server
+         * (dan ditampilkan di kolomnya sendiri) supaya browser tidak pernah menghitung ulang angka sales.
+         */
+        const beda = sales + (gudang || 0) - (kledo || 0);
         sel.textContent = String(beda);
         sel.classList.toggle('ada-selisih', beda !== 0);
       }
       tabel.addEventListener('input', (ev) => {
         const inp = ev.target;
         if (!inp || !inp.hasAttribute) return;
-        if (!inp.hasAttribute('data-fisik') && !inp.hasAttribute('data-kledo')) return;
+        if (!inp.hasAttribute('data-gudang') && !inp.hasAttribute('data-kledo')) return;
         const tr = inp.closest('tr');
         if (tr) segarkanSelisih(tr);
       });
       /*
-       * Tombol **Fix** (permintaan user revisi ke-162) mengirim formulir `#formFix` berisi Stok Fisik &
-       * Stok Kledo yang sedang diisi; server menghitung ulang Stok di Sales & Selisih lalu menyimpannya
-       * sebagai hasil rekap. Tombolnya dinonaktifkan selama salah satu kolom isian masih kosong supaya
-       * petugas tahu harus mengisi dulu — pesannya sama dengan yang diperiksa server.
+       * Tombol **Fix** mengirim formulir `#formFix` berisi Total Stok di Gudang & Stok Kledo yang sedang
+       * diisi; server menghitung ulang Total Stok di Sales & Selisih lalu menyimpannya sebagai hasil
+       * rekap. Tombolnya dinonaktifkan selama KEDUA kolom isian masih kosong supaya petugas tahu harus
+       * mengisi dulu — pesannya sama dengan yang diperiksa server.
        */
       const btnFix = document.getElementById('btnFix');
       if (btnFix) {
         const adaIsi = () => {
-          const f = tabel.querySelector('[data-fisik]');
+          const g = tabel.querySelector('[data-gudang]');
           const k = tabel.querySelector('[data-kledo]');
           const isi = (i) => String((i && i.value) || '').trim() !== '';
-          return isi(f) || isi(k);
+          return isi(g) || isi(k);
         };
         const jaga = () => {
           btnFix.disabled = !adaIsi();
-          btnFix.title = btnFix.disabled ? 'Isi Stok Fisik atau Stok Kledo dulu' : 'Simpan hasil rekap ini';
+          btnFix.title = btnFix.disabled ? 'Isi Total Stok di Gudang atau Stok Kledo dulu' : 'Simpan hasil rekap ini';
         };
         jaga();
         tabel.addEventListener('input', jaga);

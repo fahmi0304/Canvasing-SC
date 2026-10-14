@@ -59,23 +59,46 @@ function tombolArsip({ base, tampilArsip, jumlahArsip }) {
 }
 
 /**
- * NAMA BARANG = TAUTAN ke REKAP STOK (permintaan user): mengklik nama barang membuka lembar Rekap Stok
- * (semua barang jadi baris) yang menyorot baris barang itu — waktu user melihat bentuk tabelnya, ia
- * minta "kolom yang pertama nama barang … stok di sales … stok fisik, stok di aplikasi kledo, terakhir
- * selisih", jadi tabel itulah yang ditampilkan (bukan popup per barang).
+ * NAMA BARANG = tombol RINCIAN PEMBAWA (permintaan user terbaru: *"Munculkan rincian yang membawa Saat
+ * nama barang di klik saja"*, dengan keputusan pemilik aplikasi: kolom "Dibawa oleh" DIHAPUS dari tabel
+ * dan rinciannya cukup muncul sebagai **popup saat nama barang diklik**; jalan ke Rekap Stok tetap lewat
+ * **menu aksi baris** — lihat opsi "Rekap Stok" di `opsi` pada `exports.daftar`).
+ *
+ * Markup-nya tetap `<a href="…/rekap-stok?barang=<id>">` (perilaku LAMA) sebagai **cadangan tanpa
+ * JavaScript**, tetapi membawa `data-pembawa` (JSON daftar pembawa) + `data-barang` (nama) yang dipakai
+ * handler klien `[data-pembawa]` (`public/app.js`) untuk menampilkan popup dan membatalkan navigasinya.
  */
-function tombolNamaBarang(p, base) {
-  return `<a class="barang-pilih" href="${base}/rekap-stok?barang=${Number(p.id)}" title="Lihat rekap stok &amp; isi hitungan fisik"><b>${esc(p.nama)}</b></a>`;
+function tombolNamaBarang(p, base, pembawa) {
+  const orang = Array.isArray(pembawa) ? pembawa : [];
+  const data = esc(JSON.stringify(orang.map((o) => ({ s: String(o.sales || ''), q: Number(o.qty) || 0 }))));
+  return `<a class="barang-pilih" href="${base}/rekap-stok?barang=${Number(p.id)}"
+    data-pembawa="${data}" data-barang="${esc(p.nama)}"
+    title="Lihat siapa saja yang membawa barang ini"><b>${esc(p.nama)}</b></a>`;
 }
 
-exports.daftar = function ({ daftar, cari, base, pesan, jumlahSemua, bolehUbah = true, tampilArsip = false, jumlahArsip = 0, dipakai = [] }) {
+exports.daftar = function ({ daftar, cari, base, pesan, jumlahSemua, bolehUbah = true, tampilArsip = false, jumlahArsip = 0, dipakai = [], pembawa = new Map() }) {
   const berTransaksi = new Set(dipakai.map(Number));
+  /*
+   * `pembawa` = Map(produkId → [{ sales, qty }]) dari `q.pemetaanPembawa()` (hanya surat jalan yang BELUM
+   * selesai, jumlah B + T). Datanya TIDAK lagi dirender sebagai kolom tabel, melainkan ditempelkan ke
+   * nama barang (`data-pembawa`) untuk popup rincian — permintaan user: *"Munculkan rincian yang membawa
+   * Saat nama barang di klik saja"*.
+   */
+  const pembawaBarang = (p) => pembawa.get(Number(p.id)) || [];
   const baris = daftar
     .map(
       (p) => {
         const arsip = Number(p.arsip) === 1;
         const dipakaiTransaksi = berTransaksi.has(Number(p.id));
-        const opsi = [{ href: `${base}/label?q=${encodeURIComponent(p.kode)}`, ikon: '▥', label: 'Cetak label', ket: 'barcode / QR barang ini' }];
+        /*
+         * "Rekap Stok" = jalan menuju lembar Rekap Stok barang ini (permintaan user: setelah klik nama
+         * barang memunculkan popup rincian pembawa, jalan ke Rekap Stok pindah ke menu aksi baris ini).
+         * Ditaruh paling depan supaya mudah ditemukan.
+         */
+        const opsi = [
+          { href: `${base}/rekap-stok?barang=${Number(p.id)}`, ikon: '▤', label: 'Rekap Stok', ket: 'stok tiap sales & isi hitungan fisik' },
+          { href: `${base}/label?q=${encodeURIComponent(p.kode)}`, ikon: '▥', label: 'Cetak label', ket: 'barcode / QR barang ini' },
+        ];
         if (bolehUbah) {
           if (arsip) {
             opsi.push({
@@ -112,7 +135,7 @@ exports.daftar = function ({ daftar, cari, base, pesan, jumlahSemua, bolehUbah =
         }
         return `<tr data-kode="${esc(p.kode)}" data-nama="${esc(String(p.nama).toLowerCase())}" data-cari="${esc((p.kode + ' ' + p.nama).toLowerCase())}"${arsip ? ' class="baris-arsip"' : ''}>
         <td class="kode">${esc(p.kode)}</td>
-        <td>${tombolNamaBarang(p, base)}${arsip ? ' <span class="badge b-abu">diarsip</span>' : ''}${p.aktif ? '' : ' <span class="badge b-kuning">tidak ikut canvasing</span>'}</td>
+        <td>${tombolNamaBarang(p, base, pembawaBarang(p))}${arsip ? ' <span class="badge b-abu">diarsip</span>' : ''}${p.aktif ? '' : ' <span class="badge b-kuning">tidak ikut canvasing</span>'}</td>
         <td class="aksi-sel">${menuBaris({ judul: esc(p.kode) + ' · ' + esc(p.nama), opsi })}</td>
       </tr>`;
       }
@@ -141,7 +164,7 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
     -->
     <button class="btn btn-ghost btn-sm urut-az" type="button" data-urut-az data-urut="#tblBarang" aria-pressed="false" title="Urutkan nama barang A–Z">Urut A–Z</button>
     <!-- petunjuk singkat: nama barang bisa diklik untuk melihat berapa yang masih dibawa sales (revisi ke-159) -->
-    <span class="hint hint-pilih">Klik nama barang untuk membuka <b>Rekap Stok</b> (stok tiap sales, stok fisik, stok Kledo, selisih).</span>
+    <span class="hint hint-pilih">Klik <b>nama barang</b> untuk melihat <b>siapa saja yang masih membawa</b> barang itu beserta jumlahnya. Membuka halaman <b>Rekap Stok</b> bisa lewat menu aksi (garis tiga) pada barisnya.</span>
   </div>
   <div class="tbl-wrap" style="max-height:62vh;overflow:auto">
     <table class="tbl tbl-pekat" id="tblBarang">

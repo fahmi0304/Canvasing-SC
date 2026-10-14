@@ -43,7 +43,15 @@ const STATUS_RINGKAS = {
  * berubah (menu per statusnya diatur di `views/laporan.js → exports.hub`).
  */
 function menuPerjalanan(s, opsi) {
-  const { base, bolehHapus, bolehBuka = true, balikKe = '' } = opsi;
+  const { base, bolehHapus, bolehHapusDraft = false, bolehBuka = true, balikKe = '' } = opsi;
+  /*
+   * HAK HAPUS PER BARIS (permintaan user: *"Buat Surat jalan draft bisa di hapus admin"* — keputusan
+   * pemilik aplikasi: **admin gudang boleh hapus HANYA status draft**, administrator tetap semua status).
+   * `bolehHapus` = administrator (semua status), `bolehHapusDraft` = admin gudang (draft saja) — keduanya
+   * diisi route `/` dan aturan yang sama dipakai `server.js → bolehHapusSesi()` supaya UI & server
+   * tidak pernah berbeda.
+   */
+  const bolehHapusBaris = bolehHapus || (bolehHapusDraft && s.status === 'draft');
 
   /*
    * Opsi **"Buka" (keterangan "Lanjutkan alur perjalanan")** untuk membuka/melanjutkan perjalanan dari
@@ -92,7 +100,7 @@ function menuPerjalanan(s, opsi) {
     if (undo) daftar.push(undo);
   }
 
-  if (bolehHapus) {
+  if (bolehHapusBaris) {
     daftar.push({
       form: `${base}/sesi/${s.id}/hapus`,
       kelas: 'ttk-hapus',
@@ -150,7 +158,7 @@ function tabelPerjalanan(daftar, opsi) {
   </div>`;
 }
 
-exports.render = function ({ daftar = [], base = '', pesan, bolehUbah = true, bolehHapus = true, bolehBuka = true }) {
+exports.render = function ({ daftar = [], base = '', pesan, bolehUbah = true, bolehHapus = true, bolehHapusDraft = false, bolehBuka = true }) {
   // Permintaan user: transaksi yang sudah SELESAI tidak ditampilkan di dasbor (biar tidak terlalu banyak);
   // seluruh riwayat lengkap ada di menu Laporan.
   const bukanSelesai = daftar.filter((s) => s.status !== 'selesai');
@@ -169,6 +177,8 @@ exports.render = function ({ daftar = [], base = '', pesan, bolehUbah = true, bo
     base,
     bolehUbah,
     bolehHapus,
+    // admin gudang: boleh hapus HANYA draft (permintaan user "Buat Surat jalan draft bisa di hapus admin")
+    bolehHapusDraft,
     /*
      * Opsi "Buka" (buka/lanjutkan perjalanan) di menu baris: administrator & admin gudang saja
      * (permintaan user revisi ke-140) — sales tidak. Route '/' mengirim `auth.bolehUbah(req)`.

@@ -1863,6 +1863,20 @@ button.gs-item.aktif .gs-angka { color: var(--indigo); }
 }
 .barang-pilih:hover, .barang-pilih:focus-visible { color: var(--indigo); border-bottom-color: currentColor; }
 
+/* ---------- POPUP "Dibawa oleh" di Inventory (permintaan user) ---------- */
+/*
+ * Rincian pembawa barang TIDAK lagi berupa kolom di tabel Inventory (kolomnya dihapus), melainkan
+ * **popup yang muncul saat nama barang diklik** (handler `[data-pembawa]` di public/app.js).
+ * Isinya: nama sales + jumlah yang masih dibawa (surat jalan belum selesai, B + T) + baris TOTAL, atau
+ * keterangan "Belum ada sales yang membawa barang ini" bila kosong.
+ */
+.pembawa-judul { margin: 0 0 2px; font-size: calc(16.5px * var(--f, 1)); }
+.pembawa-sub { margin: 0 0 10px; font-weight: 700; color: var(--ink); }
+.pembawa-tabel { width: 100%; }
+.pembawa-tabel tbody td:first-child { overflow-wrap: anywhere; }
+.pembawa-tabel tfoot td { background-color: var(--solid); font-weight: 700; }
+.pembawa-kosong { margin: 0 0 4px; }
+
 /* ---------- halaman REKAP STOK (form kertas versi layar, revisi ke-159/160) ---------- */
 /*
  * PANEL "PILIH BARANG" (revisi ke-160): halaman rekap stok menampilkan SATU barang yang dipilih, dan
@@ -1909,8 +1923,27 @@ button.gs-item.aktif .gs-angka { color: var(--indigo); }
 .urut-baris .terpilih b { color: var(--ink); }
 .urut-baris .terpilih .kd { font-size: calc(11.6px * var(--f, 1)); }
 .urut-baris .btn-primary { margin-left: auto; }
-/* kolom kode di bawah nama barang (sel dibekukan) */
+/* kolom kode di bawah nama barang (sel dibekukan) — tidak dipakai lagi di halaman ini sejak revisi ke-169
+   (SKU tidak ditampilkan); aturan ini dibiarkan untuk jaga-jaga kalau kode ditampilkan lagi. */
 #tblStok tbody td.beku .kd { display: block; margin-top: 2px; }
+/*
+ * KEPALA KELOMPOK "TOTAL STOK FISIK" + sub-kepala "Sales"/"Gudang" (revisi ke-169).
+ * Dua kolom (Total Stok di Sales — otomatis — dan Total Stok di Gudang — diisi manual) tetap DUA kolom;
+ * yang berubah hanya kepalanya: satu sel kelompok di baris pertama + dua sel sub-kepala di baris kedua.
+ * Sel kelompok dibiarkan MEMBUNGkus (`white-space: normal`) supaya pasangan kolomnya tetap sempit di HP —
+ * "Total Stok Fisik" satu baris akan meminta ±95 px dan memaksa tabel meluber.
+ */
+#tblStok th.kelompok, #tblHasilStok th.kelompok { white-space: nowrap; }
+#tblStok th.kelompok-fisik, #tblHasilStok th.kelompok-fisik { white-space: normal; line-height: 1.1; }
+#tblStok th.nama-total, #tblHasilStok th.nama-total { font-size: calc(11px * var(--f, 1)); line-height: 1.15; text-transform: none; }
+/*
+ * Kolom "SALES" (Total Stok di Sales — OTOMATIS) hanya memuat satu angka, jadi lebarnya dibuat "fit"
+ * selebar isinya di SEMUA lebar layar. Tanpa aturan dasar ini, di layar lebar `table-layout: auto` memberi
+ * sisa ruang ke kolom itu sehingga ia melebar (terukur 189 px) sementara kolom GUDANG di sebelahnya hanya
+ * 66 px — terlihat tidak seimbang.
+ */
+#tblStok td.kolom-total, #tblHasilStok td.kolom-total { width: 1%; white-space: nowrap; text-align: center; }
+#tblStok th.kelompok-fisik, #tblHasilStok th.kelompok-fisik { width: 2%; }
 /*
  * Kepala tabelnya DUA BARIS (kelompok "Stok di Sales" di atas + nama tiap sales di bawahnya). Keduanya
  * `sticky` (`table.tbl thead th { position: sticky; top: 0 }`), jadi baris kedua WAJIB diberi `top`
@@ -1946,6 +1979,8 @@ button.gs-item.aktif .gs-angka { color: var(--indigo); }
 }
 #tblStok td.kolom-selisih { width: 1%; white-space: nowrap; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; }
 #tblStok td.kolom-selisih.ada-selisih { color: #b91c1c; }
+/* Kolom SELISIH di tabel HASIL memuat keterangan di bawah angkanya — lihat aturan
+   `#tblHasilStok td.kolom-selisih-hasil` di bagian kartu Hasil Rekap. */
 /*
  * Baris yang dibuka dari klik nama barang di Inventory (`?barang=<id>`) disorot. Sel yang DIBEKUKAN harus
  * tetap pekat (aturan yang sama dengan baris khusus lain) — `background-color` opak + gradien tipis.
@@ -2346,6 +2381,23 @@ table.tbl.tbl-tengah tr.baris-tanggal > td {
 }
 .pengambilan-card tr.baris-rinci-klik.terbuka > td.num::after { transform: rotate(180deg); }
 .pengambilan-card tr.baris-rinci-klik:focus-visible { outline: 2px solid var(--indigo); outline-offset: -2px; }
+/*
+ * KOLOM AKSI (tombol hapus penginputan, revisi ke-170 — administrator saja & belum selesai).
+ * Penanda panah rincian ada di kolom Qty, jadi kolom aksi ini duduk di KANAN panah: tombolnya kecil
+ * (28×26 px) supaya barisnya tetap rapat dan tidak menambah lebar tabel di HP.
+ * Tombolnya `<button>` di dalam `<form>` → kliknya diabaikan handler klik-baris (tidak ikut membuka rincian).
+ */
+.pengambilan-card #tblPengambilan th.aksi-sel, .pengambilan-card #tblPengambilan td.aksi-sel {
+  width: calc(34px * var(--f, 1)); text-align: center; padding-left: 2px; padding-right: 2px;
+}
+.pengambilan-card .form-hapus-entri { display: inline; margin: 0; }
+.pengambilan-card .ttk-hapus { width: 28px; height: 26px; }
+/*
+ * Ukuran ikon sampah di tombol hapus penginputan WAJIB ditulis eksplisit — SVG tanpa lebar/tinggi
+ * mengambil ukuran bawaan (±300×150 px) sehingga tombolnya membesar (kesalahan yang pernah terjadi pada
+ * ikon kalender/roda gigi & memo).
+ */
+.pengambilan-card .ttk-hapus svg { width: 15px; height: 15px; display: block; }
 .rinci-list { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 4px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .rinci-list li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 8px; border-radius: 8px; background: var(--card-soft); font-size: calc(12.2px * var(--f, 1)); }
 .rinci-list .rinci-nama { min-width: 0; overflow-wrap: anywhere; }
@@ -2458,7 +2510,32 @@ html[data-tema="gelap"] .pasang-langkah b { color: #c7d2fe; }
 .kartu-hasil { margin-top: 22px; }
 .kartu-hasil .kepala-hasil { display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
 .kartu-hasil .kepala-hasil .card-title-heading { margin: 0; flex: 1 1 auto; min-width: 0; }
-.kartu-hasil .kepala-hasil .hasil-aksi { display: flex; gap: 10px; flex-wrap: wrap; }
+.kartu-hasil .kepala-hasil .hasil-aksi { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+/*
+ * Form tersembunyi untuk tombol hapus massal (revisi ke-173) — tombolnya ada di KEPALA kartu dan
+ * memakai atribut `form="…"`, jadi form-nya sendiri tidak perlu tampil. `display: none` tidak menghalangi
+ * `form.submit()` maupun pengaitan lewat atribut `form`.
+ */
+.kartu-hasil .form-hapus-massal { display: none; }
+/* Di HP: tombol cetak PDF selebar kartu, dua tombol hapus berdampingan supaya kepala kartunya tidak
+   menjadi terlalu tinggi (tiga tombol menumpuk = ±184 px — terukur). */
+@media (max-width: 700px) {
+  .kartu-hasil .kepala-hasil .hasil-aksi { width: 100%; align-items: stretch; }
+  .kartu-hasil .kepala-hasil .hasil-aksi .btn { flex: 1 1 100%; }
+  .kartu-hasil .kepala-hasil .hasil-aksi .btn-danger { flex: 1 1 calc(50% - 5px); min-width: 0; }
+}
+/*
+ * Label tombol cetaknya panjang ("Cetak PDF (semua barang yang sudah difix)") sedangkan `.btn` bawaannya
+ * `white-space: nowrap` — di HP label sepanjang itu bisa meluber keluar kartu. Karena tombolnya sekarang
+ * hanya satu, teksnya boleh membungkus dan lebarnya dibatasi kartunya.
+ */
+.kartu-hasil .kepala-hasil .hasil-aksi .btn { max-width: 100%; white-space: normal; text-align: center; }
+/*
+ * Ikon sampah pada tombol hapus hasil rekap (permintaan user revisi ke-171).
+ * Ukurannya WAJIB ditulis eksplisit: SVG tanpa lebar/tinggi mengambil ukuran bawaan (±300×150 px) sehingga
+ * tombolnya membesar — kesalahan yang pernah terjadi pada ikon kalender/roda gigi & memo.
+ */
+#tblHasilStok .ttk-hapus svg { width: 15px; height: 15px; display: block; }
 /*
  * Baris hasil rekap MILIK BARANG YANG SEDANG DIBUKA ditandai (permintaan user revisi ke-165: daftar hasil
  * fix memuat SEMUA barang, jadi baris barang yang sedang dibuka perlu bisa dikenali). Latar dipasang
@@ -2471,9 +2548,56 @@ html[data-tema="gelap"] .pasang-langkah b { color: #c7d2fe; }
 .kartu-hasil .keterangan-nomor, .keterangan-nomor { font-size: calc(11.8px * var(--f, 1)); line-height: 1.5; }
 #tblHasilStok td.num, #tblHasilStok th.num { padding-left: 4px; padding-right: 4px; }
 #tblHasilStok tbody td.beku { white-space: normal; }
-#tblHasilStok td.ada-selisih { color: #b91c1c; font-weight: 700; }
 #tblHasilStok .form-hapus-fix { display: inline; }
 #tblHasilStok .ttk-hapus { width: 32px; height: 30px; }
+/*
+ * KETERANGAN SELISIH di dalam kolom SELISIH, di bawah angkanya (permintaan user revisi ke-174):
+ * 0 → "Valid" (netral), minus → "Minus" (merah), lebih → "Lebih" (hijau) — warnanya SAMA dengan PDF.
+ * Angkanya tetap tebal & agak kecil supaya dua baris muat dalam satu baris tabel yang rapat.
+ */
+/*
+ * SELISIH di tabel HASIL (revisi ke-174, disempurnakan revisi ke-175 & ke-176):
+ *  - **0** → ditulis **"Valid"** saja (tanpa angka 0), ukuran & ketebalan sama seperti angka lain;
+ *  - **minus** → angkanya saja, **MERAH & BOLD** (tanpa kata "Minus");
+ *  - **lebih** → angkanya saja, **HIJAU & BOLD** (tanpa kata "Lebih").
+ * Warna & aturannya sama dengan dokumen PDF (`lib/rekapStok.js`). Angka semua baris tetap satu garis dasar
+ * (`turun` di PDF / `line-height` di layar) supaya kolomnya lurus walau sebagian baris punya keterangan.
+ */
+#tblHasilStok td.kolom-selisih-hasil { line-height: 1.15; }
+#tblHasilStok td.kolom-selisih-hasil .selisih-angka { display: block; font-weight: 700; font-variant-numeric: tabular-nums; }
+#tblHasilStok td.kolom-selisih-hasil.ket-minus .selisih-angka { color: #b91c1c; font-weight: 800; }
+#tblHasilStok td.kolom-selisih-hasil.ket-lebih .selisih-angka { color: #15803d; font-weight: 800; }
+/*
+ * Baris REKAP di bawah tabel: tiga bagian (jumlah barang valid | total barang minus | total barang lebih)
+ * dengan latar **ZEBRA putih–abu muda–putih** — permintaan user revisi ke-176: *"buat kolom rekap berwarna
+ * zebra"* dengan pilihan pemilik aplikasi "dibagi 3 bagian dengan latar bergantian putih–abu–putih".
+ * Warnanya memakai variabel baris aplikasi (`--baris` / `--baris-alt`) supaya ikut mode gelap.
+ * Bagian minus tetap merah & bagian lebih tetap hijau (revisi ke-174).
+ */
+.rekap-selisih {
+  margin: 12px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+}
+.rekap-selisih .rekap-bagian {
+  padding: 8px 10px; text-align: center; font-size: calc(12.4px * var(--f, 1));
+  border-left: 1px solid var(--line); line-height: 1.35;
+}
+.rekap-selisih .rekap-bagian:first-child { border-left: 0; }
+.rekap-selisih .rekap-bagian:nth-child(odd) { background: var(--baris); }
+.rekap-selisih .rekap-bagian:nth-child(even) { background: var(--baris-alt); }
+.rekap-selisih b { font-variant-numeric: tabular-nums; }
+.rekap-selisih .ket-minus { color: #b91c1c; }
+.rekap-selisih .ket-lebih { color: #15803d; }
+/* Di HP ketiga bagian ditumpuk supaya tulisannya tidak terpotong (zebranya tetap terlihat). */
+@media (max-width: 620px) {
+  .rekap-selisih { grid-template-columns: 1fr; }
+  .rekap-selisih .rekap-bagian { border-left: 0; border-top: 1px solid var(--line); }
+  .rekap-selisih .rekap-bagian:first-child { border-top: 0; }
+}
+html[data-tema="gelap"] .rekap-selisih .ket-minus,
+html[data-tema="gelap"] #tblHasilStok td.kolom-selisih-hasil.ket-minus .selisih-angka { color: #fca5a5; }
+html[data-tema="gelap"] .rekap-selisih .ket-lebih,
+html[data-tema="gelap"] #tblHasilStok td.kolom-selisih-hasil.ket-lebih .selisih-angka { color: #86efac; }
 @media (max-width: 700px) {
   /*
    * DI HP TABEL HARUS **MUAT TANPA DIGESER MENDATAR** (keluhan user: "header masih tumpang tindih" — saat
@@ -2484,26 +2608,86 @@ html[data-tema="gelap"] .pasang-langkah b { color: #c7d2fe; }
    *  - padding kartu di halaman ini dikecilkan supaya ruang tabelnya bertambah.
    */
   .halaman-rekap-stok .card { padding: 14px 10px; }
-  #tblStok thead th, #tblStok tbody td, #tblHasilStok thead th, #tblHasilStok tbody td { padding: 7px 2px; }
-  #tblStok td.kolom-isi input { width: calc(38px * var(--f, 1)); padding: 6px 2px; }
-  #tblStok thead tr:nth-child(2) th { min-width: calc(17px * var(--f, 1)); }
-  #tblStok thead th.kolom-isian { white-space: normal; font-size: calc(10.4px * var(--f, 1)); line-height: 1.15; }
+  /*
+   * Padding & lebar input dirapatkan LAGI (revisi ke-168) karena kolomnya bertambah satu: "Stok Fisik"
+   * dipecah menjadi **Total Stok di Sales** (otomatis) + **Total Stok di Gudang** (manual). Tanpa ini
+   * tabelnya lebih lebar dari layar (terukur 401 px untuk ruang 336 px) sehingga kolom beku menutupi
+   * tulisan kepala — persis keluhan "header tumpang tindih" yang dulu.
+   */
+  #tblStok thead th, #tblStok tbody td, #tblHasilStok thead th, #tblHasilStok tbody td { padding: 6px 1px; }
+  #tblStok td.kolom-isi input { width: calc(30px * var(--f, 1)); padding: 6px 2px; }
+  #tblStok thead tr:nth-child(2) th { min-width: calc(13px * var(--f, 1)); }
+  #tblStok thead th.kolom-isian { white-space: normal; font-size: calc(9.6px * var(--f, 1)); line-height: 1.1; }
+  /*
+   * Kolom "Total Stok di Sales" = angka pendek, jadi kolomnya dibuat "fit" selebar isinya.
+   * KEPALA-nya sengaja DIBIARKAN MEMBUNGKUS (`white-space: normal`) — kalau dipaksa satu baris per kata,
+   * "Stok di Sales" menjadi 60 px dan kolomnya membengkak jadi 94 px (terukur), sehingga tabel meluber
+   * 43 px di layar 390 px. Sel datanya tetap `nowrap` (angkanya tidak boleh terpotong).
+   */
+  #tblStok th.kolom-total {
+    width: 1%; white-space: normal; line-height: 1.1; font-size: calc(10px * var(--f, 1));
+    padding-left: 2px; padding-right: 2px;
+  }
+  #tblStok td.kolom-total { width: 1%; white-space: nowrap; font-size: calc(11px * var(--f, 1)); padding-left: 2px; padding-right: 2px; }
   /*
    * Tabel HASIL di bawah juga harus muat tanpa digeser. Kolomnya kini NO · Nama Barang · angka 1..N ·
-   * Stok Fisik · Stok Kledo · Selisih · tombol hapus (kolom "Waktu fix" & nama pemfix sudah dihapus).
+   * **Total Stok di Sales** · **Total Stok di Gudang** · Stok Kledo · Selisih · tombol hapus (kolom
+   * "Waktu fix" & nama pemfix sudah dihapus).
    * `!important` WAJIB di sini: tabel itu memakai kelas `.rapat` yang menulis
    * `.rapat td, .rapat th { padding: 7px 10px !important }` — tanpa ini padding tidak menyusut
    * (terukur kolom NO 39 px & tabel tetap meluber 142 px).
    */
-  #tblHasilStok thead th, #tblHasilStok tbody td { padding: 6px 2px !important; }
-  #tblHasilStok thead th { font-size: calc(10.6px * var(--f, 1)); }
-  #tblHasilStok thead th.kolom-isian { white-space: normal; line-height: 1.15; }
-  #tblHasilStok .aksi-sel { width: calc(30px * var(--f, 1)); }
-  #tblHasilStok thead tr:nth-child(2) th { min-width: calc(16px * var(--f, 1)); }
-  #tblHasilStok thead th.beku { white-space: normal; font-size: calc(10.4px * var(--f, 1)); line-height: 1.15; }
+  #tblHasilStok thead th, #tblHasilStok tbody td { padding: 6px 1px !important; }
+  #tblHasilStok thead th { font-size: calc(9.8px * var(--f, 1)); }
+  #tblHasilStok thead th.kolom-isian { white-space: normal; line-height: 1.1; }
+  #tblHasilStok .aksi-sel { width: calc(26px * var(--f, 1)); }
+  #tblHasilStok thead tr:nth-child(2) th { min-width: calc(12px * var(--f, 1)); }
+  #tblHasilStok thead th.beku { white-space: normal; font-size: calc(9.8px * var(--f, 1)); line-height: 1.1; }
+  #tblHasilStok th.kolom-total {
+    width: 1%; white-space: normal; line-height: 1.1; font-size: calc(9.6px * var(--f, 1)); padding-left: 2px; padding-right: 2px;
+  }
+  #tblHasilStok td.kolom-total { width: 1%; white-space: nowrap; font-size: calc(10.4px * var(--f, 1)); padding-left: 2px; padding-right: 2px; }
   #tblHasilStok td.beku .nm { display: block; overflow-wrap: anywhere; }
   #tblHasilStok .ttk-hapus { width: 28px; height: 26px; }
   #tblStok thead tr:first-child th.beku { white-space: normal; font-size: calc(10.8px * var(--f, 1)); line-height: 1.15; }
   #tblStok td.beku .nm { display: block; overflow-wrap: anywhere; }
   .form-fix .fix-baris .btn { flex: 1 1 0; }
+}
+/*
+ * LAYAR SANGAT SEMPIT (≤380px, mis. 360px): setelah kolomnya bertambah (revisi ke-168) kedua tabel masih
+ * meluber ±20 px. Padding dirapatkan ke 0 dan kolom angka sales dipersempit sedikit lagi supaya tabelnya
+ * tetap muat TANPA digeser — kalau digeser, kolom "Nama Barang" yang membeku akan menutupi tulisan kepala
+ * di sebelahnya (keluhan lama "header tumpang tindih"). JANGAN hapus tanpa mengukur ulang di 360 px.
+ */
+@media (max-width: 380px) {
+  #tblStok thead th, #tblStok tbody td { padding: 6px 0; }
+  #tblHasilStok thead th, #tblHasilStok tbody td { padding: 6px 0 !important; }
+  /*
+   * PENTING: kepala kolom sales punya aturan sendiri di bagian atas berkas
+   * (`#tblStok thead th.nama-sales { padding: 8px 6px }`) yang lebih spesifik daripada
+   * `#tblStok thead th`, jadi padding-nya WAJIB ditimpa di sini — kalau tidak, 5 kolom sales memakan
+   * 5 × 12 px padding dan tabelnya tetap meluber (terukur 315 px untuk ruang 306 px).
+   */
+  #tblStok thead th.nama-sales { padding: 6px 1px; min-width: calc(10px * var(--f, 1)); font-size: calc(10.4px * var(--f, 1)); }
+  #tblStok td.num, #tblStok th.num { padding-left: 2px; padding-right: 2px; }
+  /*
+   * Di 360 px huruf tabel input dikecilkan sedikit lagi (13,5 → 11 px) — bukan hiasan, tapi supaya
+   * lebar minimum seluruh kolom turun di bawah ruang yang tersedia (terukur 315 → ±290 px untuk ruang
+   * 306 px). Tanpa ini tabelnya harus digeser mendatar dan kolom nama yang membeku akan menutupi kepala.
+   */
+  #tblStok tbody td { font-size: calc(11px * var(--f, 1)); }
+  #tblStok thead th.kolom-isian { font-size: calc(9px * var(--f, 1)); }
+  #tblStok th.kolom-total { font-size: calc(9.2px * var(--f, 1)); }
+  #tblStok td.kolom-total { font-size: calc(10px * var(--f, 1)); }
+  #tblStok thead tr:first-child th.beku { font-size: calc(10px * var(--f, 1)); }
+  #tblStok thead tr:nth-child(2) th { min-width: calc(10px * var(--f, 1)); }
+  #tblHasilStok thead tr:nth-child(2) th { min-width: calc(10px * var(--f, 1)); }
+  #tblStok td.kolom-isi input { width: calc(26px * var(--f, 1)); }
+  /*
+   * Tabel HASIL juga dipadatkan di ≤380 px: kolom aksi & tombol hapus dikecilkan dan sub-kepala
+   * diperkecil sedikit — tanpa ini tabelnya masih meluber ±15 px di 360 px.
+   */
+  #tblHasilStok .aksi-sel { width: calc(22px * var(--f, 1)); }
+  #tblHasilStok .ttk-hapus { width: 22px; height: 24px; }
+  #tblHasilStok th.nama-total, #tblHasilStok thead th.kolom-isian { font-size: calc(9px * var(--f, 1)); }
 }
