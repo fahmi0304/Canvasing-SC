@@ -1,5 +1,5 @@
 'use strict';
-const { esc, angka, tanggalPendek } = require('../lib/util');
+const { esc, angka, tanggalPendek, perluDataPenjualan } = require('../lib/util');
 
 /**
  * Nama hari Indonesia dari tanggal ISO ('2026-10-08' → 'Kamis').
@@ -15,6 +15,12 @@ const { menuBaris, attrBarisKlik, opsiUndo } = require('./menu-baris');
 const { PLUS } = require('./ikon');
 const { kartuGrafik } = require('./grafik');
 const { noSurat } = require('../lib/kode');
+/*
+ * `?v=` pada tautan PDF F4 = waktu ubah templat dokumen (lihat lib/versiDokumen.js). Wajib: tanpa itu
+ * penampil PDF di ponsel masih menyajikan berkas LAMA untuk alamat yang sama, sehingga perbaikan
+ * dokumen terlihat "tidak jalan" (kejadian nyata: laporan ZA008 masih penuh ikon centang).
+ */
+const { VERSI_DOKUMEN } = require('../lib/versiDokumen');
 
 /**
  * Keterangan status versi ringkas untuk tabel dasbor.
@@ -26,7 +32,16 @@ const { noSurat } = require('../lib/kode');
  */
 const STATUS_RINGKAS = {
   draft: { label: 'Draft', warna: 'kuning' },
+  /*
+   * `tunggu_jual` = surat jalan sudah terbit tetapi penjualan (P) belum diisi — permintaan user:
+   * *"jika penjualan belum di imput statusnya menunggu data penjualan"* — labelnya sejak revisi ke-184 ditulis "Ongoing". Status LAMA `kirim` (arti sama)
+   * tetap punya label pendeknya sendiri supaya data lama tidak berubah tampilannya.
+   */
+  tunggu_jual: { label: 'Ongoing', warna: 'biru' },
   kirim: { label: 'Ongoing', warna: 'biru' },
+  // Status baru (permintaan user): antara "Ongoing" dan "Sedang Rekap" — sales sudah mengisi jumlah
+  // penjualan (kolom P), menunggu petugas memulai rekap. Warnanya tosca (badge .b-tosca di app.css).
+  jual: { label: 'Menunggu Rekap', warna: 'tosca' },
   rekap: { label: 'Sedang Rekap', warna: 'ungu' },
   selesai: { label: 'Selesai', warna: 'hijau' },
 };
@@ -80,7 +95,7 @@ function menuPerjalanan(s, opsi) {
    */
   if (s.status !== 'draft') {
     daftar.push({
-      href: `${base}${s.status === 'selesai' ? `/cetak/laporan-pdf/${s.id}` : `/cetak/surat-jalan-pdf/${s.id}`}`,
+      href: `${base}${s.status === 'selesai' ? `/cetak/laporan-pdf/${s.id}` : `/cetak/surat-jalan-pdf/${s.id}`}?v=${VERSI_DOKUMEN}`,
       target: true,
       attr: 'data-pdf-buka',
       ikon: '🖨',
@@ -130,7 +145,12 @@ function tabelPerjalanan(daftar, opsi) {
 
   const baris = urut
     .map((s) => {
-      const st = STATUS_RINGKAS[s.status] || { label: s.status, warna: 'abu' };
+      /*
+       * Badge status baris: label ringkas dasbor, KECUALI keadaan "rekap sudah dikunci tetapi
+       * penjualan (P) masih kosong" (perluDataPenjualan) yang ditulis "Menunggu Data Penjualan" —
+       * permintaan user. Aturannya sama dengan layar lain lewat `perluDataPenjualan()` di lib/util.js.
+       */
+      const st = perluDataPenjualan(s) ? { label: 'Menunggu Data Penjualan', warna: 'biru' } : STATUS_RINGKAS[s.status] || { label: s.status, warna: 'abu' };
       /*
        * permintaan user: tanggal = NAMA HARI di atas lalu tanggalnya di bawah ("08/10/2026"), dan
        * keterangan Draft/Ongoing diletakkan DI BAWAH KODE SALES (bukan lagi di bawah tanggal).

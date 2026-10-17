@@ -103,14 +103,10 @@
     kiriKanan('Total Barang', data.total === '' || data.total === undefined ? '' : String(data.total), F.total);
 
     /*
-     * Tanda tangan — bisa dimatikan dari Setting → Edit Logo & Layout Surat (`data.ttd === false`),
-     * supaya hasil cetak struk sama dengan yang terlihat di halaman memo.
+     * BLOK TANDA TANGAN DIHAPUS dari struk thermal (permintaan user: "hapus kolom tanda tangan di cetak
+     * laporan", pilihan pemilik aplikasi: semua dokumen termasuk struk thermal). `data.ttd` sekarang
+     * selalu `false` dari halaman memo — jangan menggambar jabatan/ruang nama lagi.
      */
-    if (data.ttd !== false) {
-      skema.push({ t: 'ttdJabatan', tinggi: Math.round(px(24)) });
-      skema.push({ t: 'ruang', tinggi: px(46), label: data.namaAdmin });
-      skema.push({ t: 'ttdNama', tinggi: Math.round(px(26)) });
-    }
     pisah();
     // memo SELALU versi terisi (mode memo kosong sudah dihapus atas permintaan user)
     teks('Barang diambil sesuai daftar di atas', F.kecil, 'center', px(22));
@@ -181,27 +177,7 @@
             ctx.fillText(barisTeks, xNama, dasar + i * Math.round(px(23)));
           });
         }
-      } else if (s.t === 'ttdJabatan') {
-        ctx.font = F.meta;
-        ctx.textAlign = 'center';
-        ctx.fillText('Admin Gudang,', pad + maks * 0.25, dasar);
-        ctx.fillText('Sales,', pad + maks * 0.75, dasar);
-      } else if (s.t === 'ruang') {
-        const lebarGaris = Math.round(maks / 2 - px(16));
-        const kiri = Math.round(pad + maks * 0.25 - lebarGaris / 2);
-        const kanan = Math.round(pad + maks * 0.75 - lebarGaris / 2);
-        ctx.lineWidth = Math.max(1, px(1.6));
-        [kiri, kanan].forEach(function (x) {
-          ctx.beginPath();
-          ctx.moveTo(x, dasar);
-          ctx.lineTo(x + lebarGaris, dasar);
-          ctx.stroke();
-        });
-      } else if (s.t === 'ttdNama') {
-        ctx.font = F.baris;
-        ctx.textAlign = 'center';
-        ctx.fillText((data.namaAdmin || '').slice(0, 16), pad + maks * 0.25, dasar);
-        ctx.fillText((data.sales || '').slice(0, 16), pad + maks * 0.75, dasar);
+
       }
       y += s.tinggi;
     });

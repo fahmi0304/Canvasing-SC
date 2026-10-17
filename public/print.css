@@ -273,6 +273,77 @@ table.grid thead th {
   print-color-adjust: exact;
 }
 table.grid td.no, table.grid th.no { width: 8mm; text-align: center; font-size: 0.88em; }
+/*
+ * KOLOM P (jumlah penjualan menurut sales) — letaknya **setelah kolom S** (permintaan user: "buat susunan
+ * di laporan, b,t,k,s,p"). Lebarnya sama dengan kolom angka lain (B/T/K), sedangkan S sedikit lebih lebar
+ * (11 mm) sebagai kolom penutup pasangan pembanding.
+ */
+table.grid td.p, table.grid th.p { width: 9mm; text-align: center; }
+/*
+ * PASANGAN PEMBANDING S–P (permintaan user: *"buat kolom s dan p sedikit terpisah atau buat bagaimana agar
+ * tampak bahwa kolom itu yang di bandingkan"*): sel S & P (kepala maupun isi) diberi latar tipis yang
+ * SAMA dan dipisahkan celah putih tipis satu sama lain, sehingga terbaca sebagai satu pasangan yang
+ * dibandingkan — kolom B/T/K tetap polos. Latarnya dipasang di <td>/<th> (bukan <tr>) supaya tidak
+ * bentrok dengan warna zebra baris.
+ */
+table.grid th.sp {
+  background: #144d59;              /* kepala pasangan: teal lebih gelap, tetap senada kepala tabel */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+table.grid tbody td.sp {
+  background: #eaf1f2;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+/* celah pemisah tipis ANTARA S dan P supaya keduanya "sedikit terpisah" */
+table.grid th.p, table.grid td.p { border-left: 0.6mm solid #fff; }
+/* penutup pasangan di sisi kanan supaya batasnya tegas */
+table.grid tbody td.p { border-right: 0.3mm solid #9db6b9; }
+/*
+ * PENANDA SELISIH Setoran (S) vs Penjualan (P) pada sel S & P — dua ARAH dengan warna berbeda
+ * (permintaan user: *"jika kolom s tidak sama dengan p maka kolomnya merah"*, lalu
+ * *"Jika barang setoran lebih, maka tulisan nya Hijau"*):
+ *   - `.beda.kurang` → setoran LEBIH SEDIKIT dari penjualan → **MERAH** (temuan: barang terjual lebih
+ *     banyak daripada yang disetor);
+ *   - `.beda.lebih`  → setoran LEBIH BANYAK dari penjualan → **HIJAU** (temuan: ada barang yang tidak
+ *     dilaporkan terjual, mis. YSL dibawa 1 dan tidak dikembalikan).
+ * `print-color-adjust: exact` wajib supaya latarnya ikut tercetak. Ditulis SESUDAH aturan `td.sp` supaya
+ * warnanya menang atas latar pasangan.
+ */
+table.grid tbody td.beda {
+  font-weight: 700;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+table.grid tbody td.beda.kurang { color: #b91c1c; background: #fbe4e4; }
+table.grid tbody td.beda.lebih { color: #15803d; background: #e4f4e9; }
+/*
+ * IKON VALID pada DOKUMEN (permintaan user: *"Ubah tulisan valid di laporan penjualan pdf ke ikon valid,
+ * ikonnya seperti gambar, pindah ikonnya dari kolom s ke kolom p"*): kolom **P** menampilkan ikon
+ * (lingkaran hijau + centang putih) kalau laporan penjualan sales sama dengan setoran, sedangkan kolom
+ * **S** tetap menampilkan angka setorannya. Ukurannya 4 mm supaya tinggi baris tabel tidak bertambah.
+ */
+table.grid td.valid-ikon { text-align: center; }
+table.grid td.valid-ikon svg.ikon-valid { width: 4mm; height: 4mm; display: block; margin: 0 auto; }
+/*
+ * Blok **"Catatan Selisih"** (permintaan user: "jika ada catatan selisih, buat catatan baru, dengan
+ * tulisan catatan selisih dan berikan nomor catatan") — dipisah dari blok Catatan biasa dengan jarak
+ * kecil, judulnya sendiri, dan nomornya mulai dari 1 lagi.
+ */
+.kotak-catatan.blok-catatan-selisih { margin-top: 1.4mm; }
+.kotak-catatan.blok-catatan-selisih .baris-otomatis.sisa .isi-otomatis { color: #444; font-weight: 400; }
+/*
+ * Baris catatan otomatis "Jumlah setoran lebih/kurang N (NAMA BARANG)" di dokumen — memakai bentuk baris
+ * catatan otomatis yang sama (kolom nomor dibiarkan kosong supaya tetap lurus), diwarnai menurut arahnya:
+ * setoran kurang = merah, setoran lebih = hijau (sama dengan sel S & P-nya).
+ */
+.catatan-otomatis-dok .baris-selisih-sp .isi-otomatis { font-weight: 700; }
+.catatan-otomatis-dok .baris-selisih-sp.kurang .isi-otomatis { color: #7a1010; }
+.catatan-otomatis-dok .baris-selisih-sp.lebih .isi-otomatis { color: #15803d; }
+/* baris S & P pada kotak jumlah/keterangan (table.rekap) juga ditandai sebagai pasangan — hanya kolom
+   angka (`td.v`) yang diberi latar supaya kolom huruf B/T/K/S/P tetap abu-abu seragam seperti semula */
+table.rekap tr.sp td.v { background: #eaf1f2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 table.grid td.nm { font-size: 1em; }
 table.grid td.q, table.grid th.q { width: 13mm; text-align: center; font-weight: 700; }
 table.grid td.b, table.grid th.b, table.grid td.k, table.grid th.k, table.grid td.s, table.grid th.s, table.grid td.t, table.grid th.t { width: 9mm; text-align: center; }
@@ -339,9 +410,6 @@ table.grid td.selisih-ada { color: #b91c1c; font-weight: 700; }
 .sj-kanan { display: flex; flex-direction: column; gap: 2mm; }
 .sj-kanan .sj-lanjutan.sembunyi { display: none; }
 .sj-kanan .kotak-catatan { flex: 0 0 auto; white-space: pre-line; }
-.sj-kanan .ttd { justify-content: space-between; gap: 2mm; margin-top: 3mm; align-items: flex-start; }
-.sj-kanan .ttd .kolom { flex: 1 1 0; min-width: 0; padding: 0 1mm; }
-.sj-kanan .ttd .garis { width: 100%; }
 table.rekap { border-collapse: collapse; font-size: 1em; }
 table.rekap td { border: 0.7pt solid #444; padding: 0.7mm 1.4mm; }
 table.rekap td.k { width: 6mm; text-align: center; font-weight: 700; background: #d9d9d9; }
@@ -350,17 +418,12 @@ table.rekap td.sel { text-align: center; font-weight: 700; background: #f0f0f0; 
 table.rekap td.sel div { font-size: 1.4em; margin-top: 0.6mm; }
 
 /*
- * Tanda tangan — permintaan user: "garis di tanda tangan, nama sales dan admin, jabatan, dibuat lurus".
- * Kedua kolom memakai tinggi jabatan yang SAMA dan teksnya menempel ke BAWAH (flex-end), sehingga garis
- * dan nama kedua kolom berada di ketinggian yang persis sama walau jabatan kiri dua baris
- * ("Mengetahui / Admin Gudang,") dan kanan satu baris ("Sales,").
+ * BLOK TANDA TANGAN DIHAPUS dari semua dokumen (permintaan user: *"hapus kolom tanda tangan di cetak
+ * laporan"*; pilihan pemilik aplikasi: surat jalan, laporan lengkap, laporan per sales, memo PDF, dan
+ * struk thermal — setelan tanda tangan tidak berpengaruh lagi). Aturan `.ttd`/`.kolom`/`.garis`/`.nama`
+ * milik tanda tangan sudah dibuang dari berkas ini supaya tidak menyesatkan; **jangan dihidupkan lagi
+ * tanpa permintaan baru**.
  */
-.ttd { display: flex; justify-content: space-around; margin-top: 4mm; font-size: 1em; text-align: center; }
-.ttd .jabatan { height: 10mm; display: flex; flex-direction: column; justify-content: flex-end; }
-.ttd .garis { border-top: 0.8pt solid #111; width: 45mm; }
-.ttd .nama { margin-top: 0.9mm; font-weight: 700; font-size: 1.02em; }
-.ttd .kolom { display: flex; flex-direction: column; align-items: center; }
-
 .memo-foot { display: flex; justify-content: space-between; margin-top: 3mm; font-size: 1em; }
 .total-barang { display: flex; gap: 2mm; align-items: flex-end; }
 .total-barang span { border-bottom: 0.8pt solid #111; min-width: 26mm; }
@@ -377,6 +440,18 @@ table.rekap td.sel div { font-size: 1.4em; margin-top: 0.6mm; }
   color: #c01818;
   border: 0.8pt solid #c01818;
   padding: 1mm;
+}
+
+/*
+ * "Dicetak: dd/mm/yyyy hh:mm" di dasar kolom kanan dokumen F4 — penanda berkas BARU supaya pengguna
+ * bisa memastikan dokumen yang dibuka bukan berkas LAMA dari penampil PDF ponselnya.
+ * Ukurannya kecil & rata kanan supaya tidak menarik perhatian tetapi tetap terbaca.
+ */
+.cetak-kapan {
+  margin-top: 2mm;
+  text-align: right;
+  font-size: 0.78em;
+  color: #555;
 }
 
 /* ===== STRUK PRINTER THERMAL (58 / 80 mm) ===== */
@@ -409,9 +484,6 @@ body.struk-lembar { margin: 0; background: #efeaf7; }
 .struk table td.q, .struk table th.q { width: 9mm; text-align: right; font-weight: 700; }
 .struk table td.nm.tulis { border-bottom: 0.4pt dotted #000; height: 3.6mm; }
 .struk .total { display: flex; justify-content: space-between; font-weight: 700; margin-top: 1mm; }
-.struk .ttd { margin-top: 5mm; display: flex; justify-content: space-between; font-size: 8pt; }
-.struk .ttd .kolom { text-align: center; }
-.struk .ttd .nama { border-top: 0.5pt solid #000; margin-top: 8mm; padding-top: 0.6mm; min-width: 20mm; font-weight: 700; }
 
 /* panel pengaturan struk (tidak ikut tercetak) */
 .struk-baris { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

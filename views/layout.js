@@ -1,5 +1,5 @@
 'use strict';
-const { esc, statusInfo } = require('../lib/util');
+const { esc, statusInfo, statusSesi } = require('../lib/util');
 const { peranInfo } = require('../lib/auth');
 const { DASBOR, SETTING: IKO_SETTING, LAPOR, INVENTORY } = require('./ikon');
 
@@ -77,7 +77,11 @@ const PWA_HEAD = (base) => `<link rel="manifest" href="${base}/manifest.webmanif
 <script>(function(){if(!('serviceWorker' in navigator))return;var b=${JSON.stringify(base || '')};window.addEventListener('load',function(){try{navigator.serviceWorker.register(b+'/sw.js',{scope:b+'/'}).catch(function(){});}catch(e){}});})();</script>`;
 
 function badge(status) {
-  const s = statusInfo(status);
+  /*
+   * Menerima STRING status ATAU satu baris perjalanan (objek berisi kolom rekap_at) — lewat statusSesi()
+   * supaya "Ongoing" dan "Menunggu Data Penjualan" dibedakan dengan aturan yang sama di semua layar.
+   */
+  const s = status && typeof status === 'object' ? statusSesi(status) : statusInfo(status);
   return `<span class="badge b-${s.warna}">${esc(s.label)}</span>`;
 }
 

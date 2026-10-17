@@ -1,10 +1,20 @@
 'use strict';
-const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, statusInfo, pisahCatatan, urutNama, kelompokCatatan, tanggalLengkap } = require('../lib/util');
+const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, arahBedaSP, catatanSelisihSPRinci, statusInfo, statusSesi, perluDataPenjualan, pisahCatatan, urutNama, kelompokCatatan, tanggalLengkap, selisihJual, selisihBarang } = require('../lib/util');
 const { opsiCetak } = require('./cetak');
 const { grupAksi } = require('./aksi-ikon');
-const { PLUS, PENSIL, RETUR, REKAP, SELESAI, KUNCI, AUDIT, HAPUS, PRINTER } = require('./ikon');
+const { PLUS, PENSIL, JUAL, RETUR, REKAP, SELESAI, KUNCI, AUDIT, HAPUS, PRINTER, VALID: IKON_VALID } = require('./ikon');
 const { noSurat } = require('../lib/kode');
+
+/**
+ * Status "belum rekap" (surat jalan sudah terbit, hitungan barang kembali belum dibuka):
+ * `tunggu_jual` ("Ongoing" — surat jalan terbit, kolom P belum diisi), `kirim` (status LAMA dengan arti yang
+ * sama, untuk data/backup lama), dan `jual` (Menunggu Rekap — penjualan sudah diisi).
+ */
+const BELUM_REKAP = ['tunggu_jual', 'kirim', 'jual'];
+/** Kolom P boleh diisi/diperbaiki: selama belum rekap, dan MASIH BOLEH juga saat rekap berjalan. */
+const BOLEH_JUAL = ['tunggu_jual', 'kirim', 'jual', 'rekap'];
 const { VERSI_EKSPEDISI } = require('../lib/rekapEkspedisi');
+const { VERSI_DOKUMEN } = require('../lib/versiDokumen');
 
 const PANEL_SCAN = (opsi) => `
 <div class="card scan-card">
@@ -154,7 +164,7 @@ exports.kartuPengambilan = kartuPengambilan;
  * OTOMATIS yang terkunci (permintaan user: "catatan yang muncul otomatis tidak bisa di edit").
  * Catatan otomatis dibangun sistem dari data pengambilan barang (lihat segarkanCatatan di server.js).
  */
-function kartuCatatan({ base, sesi }) {
+function kartuCatatan({ base, sesi, items = [] }) {
   const { manual, otomatis } = pisahCatatan(sesi.catatan);
   /*
    * Permintaan user (revisi ke-145): catatan otomatis dikelompokkan PER TANGGAL — tanggalnya ditulis
@@ -174,6 +184,22 @@ function kartuCatatan({ base, sesi }) {
       return kepala + baris;
     })
     .join('');
+  /*
+   * CATATAN OTOMATIS BARANG YANG SELISIH (permintaan user: *"buat catatan otomatis barang yang selisih
+   * 'jumlah setoran kurang 00' karena YSL bawa satu tapi tidak dikembalikan"*) — memakai helper yang SAMA
+   * dengan dokumen (`views/print.js → catatanSelisihSP()`) supaya layar & kertas berbunyi persis sama.
+   * Hanya muncul saat perbandingan Setoran vs Penjualan sudah berarti (status rekap/selesai).
+   */
+  const adaPenjualan = items.reduce((a, i) => a + (Number(i.p) || 0), 0) > 0;
+  const catatanSelisih = catatanSelisihSPRinci(items, (sesi.status === 'rekap' || sesi.status === 'selesai') && adaPenjualan);
+  /*
+   * Daftar selisih diberi NOMOR sendiri mulai dari 1 (permintaan user: *"jika ada catatan selisih, buat
+   * catatan baru, dengan tulisan catatan selisih dan berikan nomor catatan"*) — blok ini juga dipisah
+   * dari daftar catatan otomatis biasa (lihat markup di bawah).
+   */
+  const isiSelisih = catatanSelisih
+    .map((x, n) => `<li class="catatan-selisih ${x.arah}" data-selisih-sp="1"><span class="rinci-no">${n + 1}.</span><span class="rinci-nama">${esc(x.teks)}</span></li>`)
+    .join('');
   return `
 <div class="card" style="margin-top:22px;max-width:680px">
   <h2 class="card-title">Catatan</h2>
@@ -187,6 +213,15 @@ function kartuCatatan({ base, sesi }) {
       ? `<div class="catatan-otomatis">
     <div class="label-otomatis">Catatan otomatis (dibuat sistem — tidak bisa diedit)</div>
     <ul id="listCatatanOtomatis" class="rinci-list">${isiOtomatis}</ul>
+  </div>`
+      : ''
+  }
+  ${
+    // Blok BARU "Catatan Selisih" (permintaan user) — terpisah, bernomor mulai dari 1 lagi.
+    catatanSelisih.length
+      ? `<div class="catatan-otomatis blok-catatan-selisih">
+    <div class="label-otomatis">Catatan Selisih</div>
+    <ul id="listCatatanSelisih" class="rinci-list">${isiSelisih}</ul>
   </div>`
       : ''
   }
@@ -271,7 +306,9 @@ ${script}`;
  * `.page-head` yang judulnya sudah pindah ke topbar.
  */
 function kepalaPerjalanan(sesi, tambahan = '', alat = '', opsi = {}) {
-  const info = statusInfo(sesi.status);
+  // statusSesi() membedakan "Ongoing" (baru dikunci) dengan "Menunggu Data Penjualan"
+  // (rekap sudah dikunci tetapi kolom P masih kosong) — lihat lib/util.js.
+  const info = statusSesi(sesi);
   // opsi.geserKembali: geser ke kanan = kembali (permintaan user, pengganti tombol "Kembali")
   const kembali = opsi.geserKembali || '';
   /*
@@ -302,12 +339,21 @@ function kepalaPerjalanan(sesi, tambahan = '', alat = '', opsi = {}) {
  * Kotak "REKAP" di halaman perjalanan (permintaan user): gabungan kolom K & S, sekaligus tombol untuk
  * memulai / melanjutkan rekap karena ikon Rekap di deretan aksi sudah diganti ikon Retur.
  *  - status `rekap` → tautan ke halaman rekap (lanjut hitung barang kembali);
- *  - status `kirim` & barang dibawa > 0 → tombol POST `/sesi/:id/rekap/mulai` (popup konfirmasi bertema
- *    lewat `data-konfirmasi-tema` yang sudah ditangani public/app.js);
+ *  - status `kirim`/`jual` & barang dibawa > 0 → tombol POST `/sesi/:id/rekap/mulai` (popup konfirmasi
+ *    bertema lewat `data-konfirmasi-tema` yang sudah ditangani public/app.js) — status `jual`
+ *    (**Menunggu Rekap**) memang tahap yang menunggu rekap dimulai;
  *  - selain itu → kotak biasa (tidak bisa diklik) dengan keterangan alasannya.
+ *
+ * SEJAK revisi ini keterangannya memuat DUA selisih (permintaan user: "selisih di hitung dari s dikurangi
+ * p", dengan jawaban pilihan **selisih lama B+T−K−S tetap ada sebagai keterangan tambahan**):
+ *  - `selisih jual`  = S − P  (dihitung hanya kalau sales sudah mengisi P; kalau belum, selisih ini
+ *    tidak ditampilkan supaya surat jalan lama tidak berekor merah tanpa alasan);
+ *  - `selisih barang` = B + T − K − S (keterangan tambahan, sekaligus penanda kotak merah seperti dulu).
  */
-function kotakRekap(tot, selisih, { base, sesi, bolehUbah }) {
-  const waspada = selisih === 0 ? '' : ' kotak-waspada';
+function kotakRekap(tot, { base, sesi, bolehUbah }) {
+  const sj = (Number(tot.p) || 0) > 0 ? selisihJual(tot) : 0;
+  const sb = selisihBarang(tot);
+  const waspada = sj === 0 && sb === 0 ? '' : ' kotak-waspada';
   /*
    * Catatan: isi kotak dibangun dengan fungsi kecil (bukan penggantian teks/regex). Percobaan pertama
    * memakai `.replace(/<div class="note">[^<]*</, …)` untuk mengganti keterangannya — potongan itu ikut
@@ -320,22 +366,37 @@ function kotakRekap(tot, selisih, { base, sesi, bolehUbah }) {
     `<div class="note">${ket}</div>`;
   /*
    * Permintaan user (revisi ke-144): "teks k di bawah angka rekap ubah ke pcs" → keterangan kotak Rekap
-   * yang dulu `K 5` sekarang menuliskan **jumlah barang kembali + satuan pcs** (`5 pcs`), dan tetap
-   * menambahkan `· selisih N` kalau ada selisih.
+   * yang dulu `K 5` sekarang menuliskan **jumlah barang kembali + satuan pcs** (`5 pcs`).
+   *
+   * Sejak selisih penjualan (S − P) diperkenalkan, keterangan kotak ini cukup memuat **selisih barang**
+   * (B+T−K−S) — pemeriksaan selisih terhadap laporan sales ada di kotak **P** di sebelahnya
+   * supaya setiap kotak menjelaskan kolomnya sendiri.
    */
-  const ketRekap = `${angka(tot.k)} pcs${selisih === 0 ? '' : ` · selisih ${angka(selisih)}`}`;
+  const ketRekap = `${angka(tot.k)} pcs` + (sb === 0 ? '' : ` · selisih barang ${angka(sb)}`);
   const isiDefault = isi(ketRekap);
   if (!bolehUbah) return `<div class="kotak-info${waspada}">${isiDefault}</div>`;
   if (sesi.status === 'rekap') {
     return `<a class="kotak-info kotak-rekap${waspada}" href="${base}/sesi/${sesi.id}/rekap"
       title="Lanjut hitung barang kembali (isi kolom Rekap)">${isiDefault}</a>`;
   }
-  if (sesi.status === 'kirim' && (Number(tot.b) || 0) > 0) {
-    return `<form method="post" action="${base}/sesi/${sesi.id}/rekap/mulai" class="kotak-rekap-form">
+  if (BELUM_REKAP.includes(sesi.status)) {
+    /*
+     * REKAP BOLEH DIMULAI walau penjualan (P) belum diisi — permintaan user: *"Buat surat jalan tetap bisa
+     * di rekap meski penjualan bisa di imput …"*, dengan pilihan pemilik aplikasi: tombolnya **muncul
+     * dengan peringatan tambahan** kalau penjualan belum diisi. Peringatan itu ditulis di `data-pesan`
+     * popup konfirmasi, dan keterangan kotaknya ikut menandai bahwa statusnya masih Ongoing.
+     */
+    const adaPenjualan = (Number(tot.p) || 0) > 0;
+    if ((Number(tot.b) || 0) > 0) {
+      const pesanPopup = adaPenjualan
+        ? 'Penjualan (P) yang dilaporkan sales sudah tersimpan. Barang tambahan dikunci dan penghitungan barang kembali dibuka.'
+        : 'Peringatan: penjualan (kolom P) BELUM diisi, jadi angka penjualan masih 0 dan selisihnya akan terlihat di laporan. Rekap tetap bisa dijalankan — penjualan masih boleh diisi selama rekap berjalan. Barang tambahan dikunci dan penghitungan barang kembali dibuka.';
+      return `<form method="post" action="${base}/sesi/${sesi.id}/rekap/mulai" class="kotak-rekap-form">
       <button type="submit" class="kotak-info kotak-rekap${waspada}" title="Mulai rekap — hitung barang kembali"
-        data-konfirmasi-tema data-judul="Mulai rekap?"
-        data-pesan="Barang tambahan dikunci dan penghitungan barang kembali dibuka." data-ok="Ya, mulai rekap">${isiDefault}</button>
+        data-konfirmasi-tema data-judul="${adaPenjualan ? 'Mulai rekap?' : 'Mulai rekap — penjualan belum diisi?'}"
+        data-pesan="${pesanPopup}" data-ok="Ya, mulai rekap">${isiDefault}</button>
     </form>`;
+    }
   }
   // Status selesai tidak "menunggu" apa pun lagi → tampilkan keterangan K & selisih seperti biasa.
   if (sesi.status === 'selesai') return `<div class="kotak-info${waspada}">${isiDefault}</div>`;
@@ -343,12 +404,13 @@ function kotakRekap(tot, selisih, { base, sesi, bolehUbah }) {
   return `<div class="kotak-info${waspada}">${isi(ket)}</div>`;
 }
 
-exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, bolehHapus = true, tambahan = [], rincian = new Map(), ambilan = [], bolehHapusEntri = false }) {
-  const tot = { b: 0, t: 0, k: 0, s: 0 };
+exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, bolehHapus = true, tambahan = [], rincian = new Map(), ambilan = [], bolehHapusEntri = false, bolehJual = false }) {
+  const tot = { b: 0, t: 0, k: 0, s: 0, p: 0 };
   items.forEach((i) => {
-    tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i);
+    tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i); tot.p += Number(i.p) || 0;
   });
-  const selisih = tot.b + tot.t - tot.k - tot.s;
+  // selisih LAMA (keterangan tambahan sejak selisih penjualan S−P diperkenalkan) — lihat kotakRekap()
+  const selisih = selisihBarang(tot);
   const ada = items.filter((i) => i.b + i.t + i.k > 0);
 
   /*
@@ -362,15 +424,43 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
    * tabel, dan **kolom Total selalu ditulis angkanya** (0 saat semua bawaan kembali) — barang yang
    * setorannya 0 ditulis "0", bukan sel kosong (keluhan "setelah rekap kolom S yang kosong kolomnya jadi
    * full hitam"). Kolom B & T tetap dikosongkan saat 0 (sama seperti kertas).
+   *
+   * Permintaan user TERBARU: *"di halaman sebelum rekap berikan kolom p"* → kolom **P** ditambahkan
+   * tepat di samping kolom **Total** (Total = Setoran/`setoranEfektif`), jadi urutannya
+   * **Nama Barang · B · T · P · Total**. Kolom P hanya ditampilkan setelah surat jalan terbit
+   * (status `kirim` ke atas); saat masih `draft` belum ada penjualan sama sekali sehingga kolomnya
+   * dibiarkan tidak ada.
    */
+  const tampilP = sesi.status !== 'draft';
+  /*
+   * Penanda warna S & P (merah = setoran kurang, hijau = setoran lebih) menyala begitu sales melaporkan
+   * penjualannya (total P > 0) — TERMASUK saat surat jalan masih Ongoing/Menunggu Rekap, karena pada
+   * tahap itulah sales mengisi P dan user mengharapkan selisihnya langsung terlihat di semua tempat
+   * (permintaan user: "Jika s tidak sama dengan p maka kolomnya merah" + "semua tempat"). Surat jalan
+   * lama (P = 0 semua) tetap bersih tanpa tanda. Sama dengan `views/print.js → bolehBandingP()`.
+   */
+  const bandingP = sesi.status !== 'draft' && (Number(tot.p) || 0) > 0;
   const baris = ada
     .map((i) => {
       const s = setoranEfektif(i);
+      const p = Number(i.p) || 0;
+      /*
+       * Sel P & Total (=S) diberi warna menurut ARAH selisihnya: **kurang** (setoran lebih sedikit dari
+       * penjualan) = MERAH, **lebih** (setoran lebih banyak dari penjualan) = HIJAU — permintaan user:
+       * *"Jika barang setoran lebih, maka tulisan nya Hijau"*.
+       */
+      const arah = bandingP ? arahBedaSP(i, s) : '';
+      /*
+       * NILAI 0 DIKOSONGKAN (permintaan user: *"kolom yang nilainya 0 biarkan kosong"*) untuk SEMUA kolom
+       * angka di tabel — B · T · P(Jual) · Total. Ini menggantikan aturan lama "kolom S selalu ditulis
+       * angkanya (0 saat balance)" yang berlaku di layar; kotak ringkasan DI ATAS tabel tetap menulis 0.
+       */
       return `<tr data-kode="${esc(i.kode)}">
         <td>${esc(i.nama)}</td>
-        <td class="num tengah">${i.b || ''}</td>
-        <td class="num tengah">${i.t || ''}</td>
-        <td class="num tengah">${angka(s)}</td>
+        <td class="num tengah">${Number(i.b) || ''}</td>
+        <td class="num tengah">${Number(i.t) || ''}</td>
+        ${tampilP ? `<td class="num tengah${arah ? ' beda-sp ' + arah : ''}">${p === 0 ? '' : angka(p)}</td>` : ''}
+        <td class="num tengah${arah ? ' beda-sp ' + arah : ''}">${s === 0 ? '' : angka(s)}</td>
       </tr>`;
     })
     .join('');
@@ -411,28 +501,49 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
       });
     }
   }
-  if (sesi.status === 'kirim') {
-    if (bolehUbah) {
-      aksiIkon.push({ href: `${base}/sesi/${sesi.id}/tambahan`, ikon: PLUS, judul: 'Input Tambahan Barang (T)', ket: 'Tambahan' });
-      // Permintaan user: ikon Retur di samping Tambahan MENGGANTIKAN ikon Rekap; mulai rekap lewat
-      // kotak "Rekap" di baris kotak B/T/Rekap (lihat kotakRekap()).
-      aksiIkon.push({ href: `${base}/sesi/${sesi.id}/retur`, ikon: RETUR, judul: 'Retur / kembalikan barang ke gudang', ket: 'Retur' });
-    }
+  if (BELUM_REKAP.includes(sesi.status) || sesi.status === 'rekap') {
+    /*
+     * Ikon PENJUALAN (kolom P) — permintaan user: *"Pada status surat jalan ongoing, sales harus
+     * memasukkan dulu jumlah barang yang di jual mereka … sales dan admin juga bisa memasukkan jumlah
+     * penjualan"*. Ikonnya paling depan karena itu langkah pertama yang diminta dari sales; yang boleh
+     * membukanya = `bolehJual` (administrator/admin gudang untuk semua surat jalan, atau sales yang
+     * namanya sama dengan nama sales surat jalan ini).
+     * Kolom P masih boleh diisi/diperbaiki SELAMA rekap berjalan, jadi ikonnya ikut tampil di status itu.
+     */
+    if (bolehJual) aksiIkon.push({ href: `${base}/sesi/${sesi.id}/jual`, ikon: JUAL, judul: 'Input jumlah barang terjual (P)', ket: 'Penjualan' });
   }
-  if (sesi.status === 'rekap') {
-    if (bolehUbah) {
-      // Lanjut hitung rekap TIDAK lagi berupa ikon (permintaan user: ikon Rekap diganti Retur) —
-      // melanjutkan rekap dari kotak "Rekap" di baris kotak B/T/Rekap.
-      aksiIkon.push({ href: `${base}/sesi/${sesi.id}/tambahan`, ikon: PLUS, judul: 'Input Tambahan (T)', ket: 'Tambahan' });
-      aksiIkon.push({ href: `${base}/sesi/${sesi.id}/retur`, ikon: RETUR, judul: 'Retur / kembalikan barang ke gudang', ket: 'Retur' });
-      aksiIkon.push({
-        form: `${base}/sesi/${sesi.id}/selesai`,
-        ikon: SELESAI,
-        judul: 'Selesaikan Rekap & Kunci',
-        ket: 'Selesai',
-        attr: konfirmasi('Selesaikan rekap & kunci semua data?', 'Angka tidak dapat diubah lagi setelah ini dan laporan lengkap F4 siap dicetak.', 'Ya, selesaikan'),
-      });
-    }
+  /*
+   * JEBAKAN yang pernah terjadi (keluhan user: "ikon tambah dan retur ganda"): Tambahan & Retur dulu
+   * ditambahkan di DUA blok — yang di atas (karena kondisinya ikut memuat status `rekap`) DAN blok
+   * khusus `rekap` di bawah — sehingga halaman surat jalan berstatus "Sedang Rekap" menampilkan ikon
+   * "Tambahan" & "Retur" masing-masing DUA KALI. Sekarang keduanya ditambahkan SEKALI SAJA:
+   * tahap BELUM REKAP di sini, tahap rekap di blok di bawah.
+   */
+  if (BELUM_REKAP.includes(sesi.status) && bolehUbah) {
+    aksiIkon.push({ href: `${base}/sesi/${sesi.id}/tambahan`, ikon: PLUS, judul: 'Input Tambahan Barang (T)', ket: 'Tambahan' });
+    // Permintaan user: ikon Retur di samping Tambahan MENGGANTIKAN ikon Rekap; mulai rekap lewat
+    // kotak "Rekap" di baris kotak B/T/Rekap (lihat kotakRekap()).
+    aksiIkon.push({ href: `${base}/sesi/${sesi.id}/retur`, ikon: RETUR, judul: 'Retur / kembalikan barang ke gudang', ket: 'Retur' });
+  }
+  if (sesi.status === 'rekap' && bolehUbah) {
+    // Lanjut hitung rekap TIDAK lagi berupa ikon (permintaan user: ikon Rekap diganti Retur) —
+    // melanjutkan rekap dari kotak "Rekap" di baris kotak B/T/Rekap.
+    aksiIkon.push({ href: `${base}/sesi/${sesi.id}/tambahan`, ikon: PLUS, judul: 'Input Tambahan (T)', ket: 'Tambahan' });
+    aksiIkon.push({ href: `${base}/sesi/${sesi.id}/retur`, ikon: RETUR, judul: 'Retur / kembalikan barang ke gudang', ket: 'Retur' });
+    aksiIkon.push({
+      form: `${base}/sesi/${sesi.id}/selesai`,
+      ikon: SELESAI,
+      judul: 'Selesaikan Rekap & Kunci',
+      ket: 'Selesai',
+      /*
+       * Peringatannya menyesuaikan: kalau penjualan (P) masih kosong, rekap memang tetap boleh dikunci
+       * tetapi statusnya TIDAK menjadi "Selesai" melainkan kembali "Ongoing" (menunggu data penjualan)
+       * dan transaksinya tetap tampil di dasbor — jangan biarkan pengguna mengira laporannya sudah final.
+       */
+      attr: tot.p > 0
+        ? konfirmasi('Selesaikan rekap & kunci semua data?', 'Angka tidak dapat diubah lagi setelah ini dan laporan lengkap F4 siap dicetak.', 'Ya, selesaikan')
+        : konfirmasi('Selesaikan rekap TANPA penjualan (P)?', 'Penjualan (P) masih kosong, jadi status surat jalan ini TIDAK menjadi "Selesai" melainkan kembali "Ongoing" (menunggu data penjualan) dan tetap tampil di dasbor. Angka rekap (B/T/K/S) tersimpan — setelah penjualan diisi, jalankan rekap lagi lalu kunci untuk menyelesaikannya.', 'Ya, kunci rekap'),
+    });
   }
   /*
    * Semua opsi cetak sekarang = berkas PDF yang dibuat server (permintaan user: "Semua cetak dokumen
@@ -444,14 +555,19 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
    * per penginputan lewat kolom **Memo** di kartu "Catatan Pengambilan Barang" serta dari menu baris
    * halaman Laporan — jadi tidak ada fungsi yang hilang. Jangan dihidupkan lagi di menu cetak.
    */
-  if (sesi.status !== 'draft')
-    cetak(`/cetak/surat-jalan-pdf/${sesi.id}`, 'PDF Surat Jalan & Setoran (F4)', 'terbuka di penampil PDF · kertas F4');
-  if (sesi.status === 'selesai')
-    cetak(`/cetak/laporan-pdf/${sesi.id}`, 'PDF Laporan Lengkap (F4)', 'terbuka di penampil PDF · semua kolom B/T/K/S');
-  // Permintaan user: opsi "Cetak Barcode Barang" DIHAPUS untuk surat jalan yang masih ONGOING
-  // (kirim/rekap) — hanya status selesai yang menyediakannya di halaman ini. Cetak barcode tetap bisa
-  // dilakukan dari halaman Inventory (`/label`), jadi tidak ada fungsi yang hilang.
-  if (sesi.status === 'selesai') cetak(`/cetak/label-pdf?sesi=${sesi.id}`, 'PDF Barcode Barang', 'terbuka di penampil PDF · label QR gulungan 58 mm');
+  /*
+   * OPSI CETAK DI HALAMAN SURAT JALAN HANYA UNTUK STATUS **SELESAI** — permintaan user: *"hapus opsi cetak
+   * di halaman surat jalan terbit, ongoing dan draft"*, dengan jawaban pilihan pemilik aplikasi: draft ·
+   * Surat Jalan Terbit · Menunggu Rekap · Sedang Rekap **tanpa** opsi cetak, hanya **Selesai** yang punya.
+   *
+   * Fungsi cetak tidak hilang: semua dokumen tetap bisa dicetak dari menu baris **Dasbor** & **Laporan**
+   * (`surat-jalan-pdf` / `laporan-pdf` / `memo-pdf`), halaman **rekap**, dan **Inventory** (barcode).
+   */
+  if (sesi.status === 'selesai') {
+    cetak(`/cetak/laporan-pdf/${sesi.id}?v=${VERSI_DOKUMEN}`, 'PDF Laporan Lengkap (F4)', 'terbuka di penampil PDF · semua kolom B/T/K/S');
+    cetak(`/cetak/surat-jalan-pdf/${sesi.id}?v=${VERSI_DOKUMEN}`, 'PDF Surat Jalan & Setoran (F4)', 'terbuka di penampil PDF · kertas F4');
+    cetak(`/cetak/label-pdf?sesi=${sesi.id}`, 'PDF Barcode Barang', 'terbuka di penampil PDF · label QR gulungan 58 mm');
+  }
 
   // Audit: ikon sejajar dengan ikon aksi lainnya (permintaan user)
   aksiIkon.push({ href: `${base}/sesi/${sesi.id}/audit`, ikon: AUDIT, judul: 'Audit perubahan perjalanan', ket: 'Audit' });
@@ -459,8 +575,8 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
   const grupIkonAksi = grupAksi({
     items: aksiIkon,
     // Permintaan user: setiap ikon punya keterangan kecil di bawahnya — termasuk ikon cetak.
-    // Status draft tidak dirender sama sekali (tidak ada opsi cetak).
-    ekstra: sesi.status === 'draft' ? '' : opsiCetak({
+    // Hanya status SELESAI yang punya opsi cetak di halaman ini (lihat `cetakOpsi` di atas).
+    ekstra: sesi.status !== 'selesai' ? '' : opsiCetak({
       base,
       opsi: cetakOpsi,
       judul: 'Cetak PDF',
@@ -477,6 +593,21 @@ exports.detail = function ({ sesi, items, base, pesan, scan, bolehUbah = true, b
   // halaman perjalanan & Overview untuk semua status — lihat kartuPengambilan().
   const kartuAmbil = kartuPengambilan({ base, sesi, tambahan, rincian, hapusEntri: { boleh: bolehHapusEntri } });
 
+  /*
+   * Keterangan kotak "P" di halaman perjalanan (permintaan user: kolom P = jumlah barang yang
+   * DIJUAL menurut sales, diisi lewat halaman penjualan `/sesi/:id/jual`).
+   *  - "belum diisi"   = surat jalan belum lewat tahap penjualan (masih `kirim`, atau sudah `jual` tetapi
+   *    sales belum mengisi satu pun angka);
+   *  - "dilaporkan sales" = sudah ada angka P;
+   *  - "tidak dilaporkan" = sudah masuk rekap/selesai tanpa angka penjualan dari sales.
+   */
+  const ketJual =
+    (Number(tot.p) || 0) > 0
+      ? `dilaporkan sales${selisihJual(tot) === 0 ? '' : ` · selisih ${angka(selisihJual(tot))}`}`
+      : BOLEH_JUAL.includes(sesi.status)
+        ? 'belum diisi'
+        : 'tidak dilaporkan';
+
   // Tulisan "barang dibawa sudah dikunci" ditaruh di PALING BAWAH halaman (permintaan user)
   const pesanKunci =
     sesi.status === 'selesai'
@@ -492,19 +623,29 @@ ${pesan ? `<div class="alert ${sesi.status === 'draft' ? 'alert-info' : 'alert-o
 ${bolehUbah ? '' : '<div class="alert alert-info">Peran kamu hanya melihat data — aksi pengubahan tidak tersedia.</div>'}
 
 <!--
-  Jumlah = satu baris berisi 3 kotak: B · T · REKAP.
+  Jumlah = satu baris berisi 3 kotak (B · T · REKAP) saat masih DRAFT, dan 4 kotak (B · T · JUAL (P) ·
+  REKAP) setelah surat jalan terbit.
   Permintaan user: "kolom k dan s diganti ke rekap, 2 kolom dijadikan 1" + "rekap dihapus, mulai rekap
   dari kolom/kotak Rekap yang baru" + "pada kolom rekap gunakan warna kontras tapi senada".
   Jadi kotak K dan S digabung menjadi satu kotak **Rekap** yang:
-   - menampilkan angka Setoran (S) sebagai angka utama dengan keterangan K dan selisihnya,
-   - menjadi SATU-SATUNYA jalan untuk mulai rekap (status kirim → tombol POST rekap/mulai dengan popup
-     konfirmasi bertema) atau melanjutkan hitung (status rekap → tautan ke halaman rekap),
+   - menampilkan angka Setoran (S) sebagai angka utama dengan keterangan K dan kedua selisihnya,
+   - menjadi SATU-SATUNYA jalan untuk mulai rekap (status kirim/jual → tombol POST rekap/mulai dengan
+     popup konfirmasi bertema) atau melanjutkan hitung (status rekap → tautan ke halaman rekap),
    - berwarna kontras tapi senada: memakai gradien aksen (indigo→violet sesuai tema pengguna).
+  Kotak **P** (permintaan user: "sales harus memasukkan dulu jumlah barang yang di jual … selisih di
+  hitung dari s dikurangi p") muncul setelah surat jalan terbit dan hilang lagi saat masih draft
+  (di draft belum ada penjualan sama sekali).
 -->
-<div class="info-kotak tiga" style="margin-top:20px">
+<div class="info-kotak${sesi.status === 'draft' ? ' tiga' : ''}" style="margin-top:20px">
   <div class="kotak-info"><div class="label">B</div><div class="value">${angka(tot.b)}</div><div class="note">dibawa</div></div>
   <div class="kotak-info"><div class="label">T</div><div class="value">${angka(tot.t)}</div><div class="note">tambahan</div></div>
-  ${kotakRekap(tot, selisih, { base, sesi, bolehUbah })}
+  ${
+    sesi.status === 'draft'
+      ? ''
+      // labelnya cukup "P" (permintaan user: *"semua keterangan jual (p) ubah ke p saja"*)
+      : `<div class="kotak-info"><div class="label">P</div><div class="value">${angka(tot.p)}</div><div class="note">${ketJual}</div></div>`
+  }
+  ${kotakRekap(tot, { base, sesi, bolehUbah })}
 </div>
 
 <!-- Kepala tabel pekat / tidak transparan (permintaan user). Judul di atas kolom DIHAPUS atas permintaan
@@ -514,18 +655,21 @@ ${bolehUbah ? '' : '<div class="alert alert-info">Peran kamu hanya melihat data 
 <div class="card" style="margin-top:22px">
   <div class="tbl-wrap" style="max-height:520px;overflow:auto">
     <table class="tbl rapat tbl-pekat">
-      <thead><tr><th>Nama Barang</th><th class="num tengah">B</th><th class="num tengah">T</th><th class="num tengah">Total</th></tr></thead>
-      <tbody>${baris || '<tr><td colspan="4" class="kosong">Belum ada jumlah yang diinput.</td></tr>'}</tbody>
+      <thead><tr><th>Nama Barang</th><th class="num tengah">B</th><th class="num tengah">T</th>${
+        // kepala kolom penjualan cukup "P" (permintaan user: "semua keterangan jual (p) ubah ke p saja")
+        tampilP ? '<th class="num tengah">P</th>' : ''
+      }<th class="num tengah">Total</th></tr></thead>
+      <tbody>${baris || `<tr><td colspan="${tampilP ? 5 : 4}" class="kosong">Belum ada jumlah yang diinput.</td></tr>`}</tbody>
     </table>
   </div>
 </div>
 ${kartuAmbil}
-${kartuCatatan({ base, sesi })}
+${kartuCatatan({ base, sesi, items })}
 ${pesanKunci}`;
 };
 
 /** OVERVIEW — tampilan laporan perjalanan (hanya baca) + opsi cetak. */
-exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian = new Map(), ambilan = [], bolehHapusEntri = false }) {
+exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian = new Map(), ambilan = [], bolehHapusEntri = false, bolehJual = false }) {
   /*
    * Permintaan user (revisi ke-136) — Overview laporan:
    *  - "juga otomatis urut barang a-z"  → daftar disusun A–Z (urutNama, sama seperti dokumen cetak);
@@ -537,11 +681,24 @@ exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian 
    *  - "daftar barang bergerak ubah ke daftar barang dibawa" → judul kartunya diganti.
    */
   const ada = urutNama(items.filter((i) => (i.b || 0) + (i.t || 0) + (i.k || 0) > 0));
-  const tot = { b: 0, t: 0, k: 0, s: 0 };
+  const tot = { b: 0, t: 0, k: 0, s: 0, p: 0 };
   ada.forEach((i) => {
-    tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i);
+    tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i); tot.p += Number(i.p) || 0;
   });
-  const selisih = tot.b + tot.t - tot.k - tot.s;
+  // selisih LAMA (B+T−K−S) — tetap ditampilkan di kotak Total/S sebagai keterangan tambahan
+  const selisih = selisihBarang(tot);
+  /*
+   * Kotak & keterangan **P** (permintaan user: "sales harus memasukkan dulu jumlah barang yang di
+   * jual mereka … selisih di hitung dari s dikurangi p"): nilai P + selisih penjualan S−P. Sama dengan
+   * halaman perjalanan supaya keduanya terbaca sama.
+   */
+  const adaP = (Number(tot.p) || 0) > 0;
+  const sj = adaP ? selisihJual(tot) : 0;
+  const ketJual = adaP
+    ? `dilaporkan sales${sj === 0 ? '' : ` · selisih ${angka(sj)}`}`
+    : BOLEH_JUAL.includes(sesi.status)
+      ? 'belum diisi'
+      : 'tidak dilaporkan';
   /*
    * Permintaan user terbaru: *"Pada overview laporan selesai, tampilkan b,t,k,s nya"* — jadi **khusus
    * status `selesai`** kotak ringkasan & kolom tabelnya memakai **B · T · K · S** (K & S baru terisi
@@ -550,28 +707,98 @@ exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian 
    * jangan ubah bagian itu tanpa permintaan baru.
    */
   const selesai = sesi.status === 'selesai';
+  /*
+   * Permintaan user: *"Jika rekap sudah di kunci namun data penjualan kosong maka statusnya bukan lagi
+   * ongoing, tapi menunggu data penjualan, tampilan overview nya b,t,k,s,p namun p nya kosong"*.
+   *
+   * Keadaan itu = rekap SUDAH dikunci tetapi penjualan (P) belum pernah diisi (`perluDataPenjualan`, cap
+   * `rekap_at` terisi). Bentuk Overview-nya disamakan dengan laporan yang sudah selesai —
+   * **B · T · K · S · P** dengan kolom P dibiarkan KOSONG (angka 0 tidak ditulis) — karena angka rekap
+   * (K & S) memang sudah ada, hanya penjualannya yang masih menunggu.
+   */
+  const menungguPenjualan = perluDataPenjualan(sesi);
+  const rekapSudah = selesai || menungguPenjualan;   // bentuk tabel/kotak 5 kolom: B · T · K · S · P
+  /*
+   * Permintaan user TERBARU (sama dengan halaman perjalanan): *"di halaman sebelum rekap berikan kolom p"*
+   * → kolom **P** ditambahkan tepat di samping kolom Total/S. Saat status masih `draft` kolomnya
+   * tidak ditampilkan (belum ada penjualan sama sekali).
+   * Penanda MERAH pada sel P & S (S tidak sama dengan P) hanya saat perbandingannya berarti
+   * (`bandingP` = sales sudah mengisi P, bukan draft) — lihat catatan di views/print.js → bolehBandingP().
+   */
+  const tampilP = sesi.status !== 'draft';
+  /*
+   * TAHAP "BELUM REKAP" (`kirim`/`jual`) — permintaan user: *"Pada overview menunggu rekap semua kolom
+   * jual (p) ganti p saja, nilai total itu b+t-p dan keterangan ikon total di atas adalah barang yang
+   * harus dikembalikan, ikon p di atas tidak harus berwarna karena memang sesuai dengan laporan sales,
+   * kolom total di bawah itu b+t-p"*.
+   *
+   * Di tahap ini kolom **P** = laporan penjualan sales APA ADANYA (tanpa warna — memang sesuai laporan),
+   * dan kolom **Total** = **B + T − P** = *sisa barang* (barang yang dibawa/ditambah
+   * tetapi tidak dilaporkan terjual). Karena Total bukan Setoran (S) lagi, perbandingan S vs P (penanda
+   * merah/hijau `beda-sp`) TIDAK dipakai di sini — penandanya tetap ada di halaman perjalanan, dokumen
+   * F4, dan Overview saat sudah `rekap`/`selesai`.
+   */
+  const belumRekap = BELUM_REKAP.includes(sesi.status) && !menungguPenjualan;
+  const totKembali = (Number(tot.b) || 0) + (Number(tot.t) || 0) - (Number(tot.p) || 0);
+  /*
+   * Penanda warna S & P (merah = setoran kurang, hijau = setoran lebih) hanya saat perbandingannya
+   * berarti: perjalanan sudah `rekap`/`selesai` DAN sales sudah melaporkan penjualan (P > 0).
+   */
+  const bandingP = (sesi.status === 'rekap' || sesi.status === 'selesai') && (Number(tot.p) || 0) > 0;
 
   /*
    * Kolom NO/Kode tetap TIDAK ditampilkan. Untuk status selesai: B & T dikosongkan bila 0 (persis kertas),
    * sedangkan K & S selalu ditulis angkanya — sama seperti dokumen F4.
    */
   const baris = ada
-    .map((i) =>
-      selesai
+    .map((i) => {
+      const s = setoranEfektif(i);
+      // arah selisih S vs P menentukan warna sel: kurang = MERAH, lebih = HIJAU (permintaan user)
+      const arah = bandingP ? arahBedaSP(i, s) : '';
+      // di tahap belum rekap: kolom P apa adanya ("terjual"), kolom Total = B + T − P ("sisa barang")
+      if (belumRekap) {
+        // nilai 0 dikosongkan di SEMUA kolom angka (permintaan user); kolom P tanpa warna
+        const kembali = (Number(i.b) || 0) + (Number(i.t) || 0) - (Number(i.p) || 0);
+        const pi = Number(i.p) || 0;
+        return `<tr data-kode="${esc(i.kode)}">
+        <td>${esc(i.nama)}</td>
+        <td class="num tengah">${Number(i.b) || ''}</td>
+        <td class="num tengah">${Number(i.t) || ''}</td>
+        ${tampilP ? `<td class="num tengah">${pi === 0 ? '' : angka(pi)}</td>` : ''}
+        <td class="num tengah">${kembali === 0 ? '' : angka(kembali)}</td>
+      </tr>`;
+      }
+      const p = Number(i.p) || 0;
+      /*
+       * IKON VALID (permintaan user: tulisan "Valid" diganti ikon dan dipindah **dari kolom S ke kolom P**,
+       * gambar kiriman user = centang putih di bulatan hijau) — berlaku di Overview & dokumen PDF:
+       * kalau laporan penjualan sales (P) SAMA dengan setoran hasil rekap (S), **kolom P** menampilkan
+       * ikonnya sedangkan **kolom S/Total tetap menampilkan angka** setorannya.
+       */
+      /*
+       * Permintaan user TERBARU: ikon VALID hanya untuk baris yang penjualannya BENAR-BENAR ada
+       * (P > 0). Kalau P = 0 — apa pun setorannya, biasanya juga 0 — selnya dibiarkan KOSONG dan
+       * TIDAK dicentang. Sebelum ini laporan seperti ZA008 (hampir seluruh barisnya P = 0 & S = 0)
+       * jadi penuh ikon centang padahal tidak ada penjualan yang dilaporkan sama sekali.
+       */
+      const valid = bandingP && p > 0 && p === s;
+      return rekapSudah
         ? `<tr data-kode="${esc(i.kode)}">
         <td>${esc(i.nama)}</td>
-        <td class="num tengah">${i.b || ''}</td>
-        <td class="num tengah">${i.t || ''}</td>
-        <td class="num tengah">${angka(i.k)}</td>
-        <td class="num tengah">${angka(setoranEfektif(i))}</td>
+        <td class="num tengah">${Number(i.b) || ''}</td>
+        <td class="num tengah">${Number(i.t) || ''}</td>
+        <td class="num tengah">${Number(i.k) || ''}</td>
+        <td class="num tengah${arah && !valid ? ' beda-sp ' + arah : ''}">${s === 0 ? '' : angka(s)}</td>
+        <td class="num tengah${valid ? ' valid-ikon' : arah ? ' beda-sp ' + arah : ''}">${valid ? IKON_VALID : p === 0 ? '' : angka(p)}</td>
       </tr>`
         : `<tr data-kode="${esc(i.kode)}">
         <td>${esc(i.nama)}</td>
-        <td class="num tengah">${i.b || ''}</td>
-        <td class="num tengah">${i.t || ''}</td>
-        <td class="num tengah">${setoranEfektif(i) || 0}</td>
-      </tr>`
-    )
+        <td class="num tengah">${Number(i.b) || ''}</td>
+        <td class="num tengah">${Number(i.t) || ''}</td>
+        ${tampilP ? `<td class="num tengah${valid ? ' valid-ikon' : arah ? ' beda-sp ' + arah : ''}">${valid ? IKON_VALID : p === 0 ? '' : angka(p)}</td>` : ''}
+        <td class="num tengah${arah && !valid ? ' beda-sp ' + arah : ''}">${s === 0 ? '' : angka(s)}</td>
+      </tr>`;
+    })
     .join('');
 
   /*
@@ -582,22 +809,56 @@ exports.overview = function ({ sesi, items, base, pesan, tambahan = [], rincian 
   const ikonAudit = `
     <a class="ttk-tombol pjl-ikon" href="${base}/sesi/${sesi.id}/audit"
        title="Audit perubahan perjalanan" aria-label="Audit perubahan perjalanan">${AUDIT}</a>`;
+  /*
+   * Ikon PENJUALAN di pojok kanan atas (sebelah ikon Audit) — permintaan user: *"sales dan admin juga bisa
+   * memasukkan jumlah penjualan"*. Ditampilkan selama kolom P masih boleh diisi (status `kirim`/`jual`)
+   * dan hanya untuk yang berhak (`bolehJual`: administrator/admin gudang untuk semua surat jalan, sales
+   * hanya untuk surat jalan miliknya). Alasannya: baris Dasbor/Laporan membuka **Overview**, jadi tanpa
+   * ikon di sini sales tidak punya jalan masuk ke halaman penjualan.
+   */
+  const ikonJual =
+    bolehJual && BOLEH_JUAL.includes(sesi.status)
+      ? `<a class="ttk-tombol pjl-ikon" href="${base}/sesi/${sesi.id}/jual"
+           title="Input jumlah barang terjual (P)" aria-label="Input jumlah barang terjual">${JUAL}</a>`
+      : '';
 
   return `
-${kepalaPerjalanan(sesi, `<span class="pjl-extra">Overview laporan</span>`, '', { geserKembali: base + '/', ikonAtas: ikonAudit })}
+${kepalaPerjalanan(sesi, `<span class="pjl-extra">Overview laporan</span>`, '', { geserKembali: base + '/', ikonAtas: ikonJual + ikonAudit })}
 ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
 
 ${
-  selesai
-    ? `<div class="info-kotak" style="margin-bottom:20px">
+  rekapSudah
+    ? `<div class="info-kotak lima" style="margin-bottom:20px">
   <div class="kotak-info"><div class="label">B</div><div class="value">${angka(tot.b)}</div><div class="note">dibawa</div></div>
   <div class="kotak-info"><div class="label">T</div><div class="value">${angka(tot.t)}</div><div class="note">tambahan</div></div>
   <div class="kotak-info"><div class="label">K</div><div class="value">${angka(tot.k)}</div><div class="note">kembali</div></div>
   <div class="kotak-info${selisih === 0 ? '' : ' kotak-waspada'}"><div class="label">S</div><div class="value">${angka(tot.s)}</div><div class="note">${selisih === 0 ? 'jumlah barang' : `jumlah barang · selisih ${angka(selisih)}`}</div></div>
+  <div class="kotak-info${sj === 0 ? '' : ' kotak-waspada'}"><div class="label">P</div><div class="value">${angka(tot.p)}</div><div class="note">${ketJual}</div></div>
 </div>`
-    : `<div class="info-kotak tiga" style="margin-bottom:20px">
+    : belumRekap
+      ? `<div class="info-kotak" style="margin-bottom:20px">
   <div class="kotak-info"><div class="label">B</div><div class="value">${angka(tot.b)}</div><div class="note">dibawa</div></div>
   <div class="kotak-info"><div class="label">T</div><div class="value">${angka(tot.t)}</div><div class="note">tambahan</div></div>
+  <!--
+    Kolom P: laporan penjualan sales APA ADANYA — sengaja TANPA warna (permintaan user).
+    Keterangannya **"terjual"** (permintaan user: *"keterangan p di kotak atas itu terjual"*) — dulu
+    "sesuai laporan sales"; jangan kembali ke kalimat panjang itu.
+  -->
+  <div class="kotak-info"><div class="label">P</div><div class="value">${angka(tot.p)}</div><div class="note">terjual</div></div>
+  <!--
+    Kolom Total di tahap ini = B + T − P dan keterangannya **"sisa barang"**
+    (permintaan user: *"keterangan total itu sisa barang"*) — menggantikan "barang yang harus dikembalikan".
+  -->
+  <div class="kotak-info${totKembali < 0 ? ' kotak-waspada' : ''}"><div class="label">Total</div><div class="value">${angka(totKembali)}</div><div class="note">sisa barang</div></div>
+</div>`
+      : `<div class="info-kotak${sesi.status === 'draft' ? ' tiga' : ''}" style="margin-bottom:20px">
+  <div class="kotak-info"><div class="label">B</div><div class="value">${angka(tot.b)}</div><div class="note">dibawa</div></div>
+  <div class="kotak-info"><div class="label">T</div><div class="value">${angka(tot.t)}</div><div class="note">tambahan</div></div>
+  ${
+    sesi.status === 'draft'
+      ? ''
+      : `<div class="kotak-info${sj === 0 ? '' : ' kotak-waspada'}"><div class="label">P</div><div class="value">${angka(tot.p)}</div><div class="note">${ketJual}</div></div>`
+  }
   <div class="kotak-info${selisih === 0 ? '' : ' kotak-waspada'}"><div class="label">Total</div><div class="value">${angka(tot.s)}</div><div class="note">${selisih === 0 ? 'jumlah barang' : `jumlah barang · selisih ${angka(selisih)}`}</div></div>
 </div>`
 }
@@ -607,14 +868,17 @@ ${
   <div class="tbl-wrap" style="max-height:520px;overflow:auto">
     <table class="tbl rapat tbl-pekat">
       <thead><tr><th>Nama Barang</th><th class="num tengah">B</th><th class="num tengah">T</th>${
-        selesai ? '<th class="num tengah">K</th><th class="num tengah">S</th>' : '<th class="num tengah">Total</th>'
+        rekapSudah
+          ? '<th class="num tengah">K</th><th class="num tengah">S</th><th class="num tengah">P</th>'
+          : // kepala kolom penjualan cukup "P" di SEMUA tahap (permintaan user)
+            `${tampilP ? '<th class="num tengah">P</th>' : ''}<th class="num tengah">Total</th>`
       }</tr></thead>
-      <tbody>${baris || `<tr><td colspan="${selesai ? 5 : 4}" class="kosong">Belum ada barang yang dibawa di perjalanan ini.</td></tr>`}</tbody>
+      <tbody>${baris || `<tr><td colspan="${rekapSudah ? 6 : tampilP ? 5 : 4}" class="kosong">Belum ada barang yang dibawa di perjalanan ini.</td></tr>`}</tbody>
     </table>
   </div>
 </div>
 ${kartuPengambilan({ base, sesi, tambahan, rincian, hapusEntri: { boleh: bolehHapusEntri } })}
-${kartuCatatan({ base, sesi })}`;
+${kartuCatatan({ base, sesi, items })}`;
 };
 
 /** AUDIT — daftar perubahan apa saja di perjalanan ini (siapa, kapan, sebelum → sesudah). */

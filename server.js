@@ -13,11 +13,12 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 
 const { q } = require('./lib/db');
+const util = require('./lib/util');
 const {
   esc, rp, angka, tanggalPanjang, tanggalPendek, hariIni, jamSekarang, jamPenanda, sekarang,
   setoranEfektif, susunCatatan, pisahCatatan, barisPengambilan, barisDiambil, barisPengembalian,
   namaAdminSesi, urutNama,
-} = require('./lib/util');
+} = util;
 const barcode = require('./lib/barcode');
 const { layout, badge } = require('./views/layout');
 const vLogin = require('./views/login');
@@ -29,6 +30,7 @@ const vSesi = require('./views/sesi');
 const vInput = require('./views/input');
 const vRekap = require('./views/rekap');
 const vRetur = require('./views/retur');
+const vJual = require('./views/jual');
 const vLabel = require('./views/label');
 const labelPdf = require('./lib/labelPdf');
 const vThermal = require('./views/thermal');
@@ -129,11 +131,20 @@ function bolehUbahAtau(req, res, target = '/') {
 
 /** Semua request yang mengubah data ditolak untuk peran Sales. */
 const JALUR_BEBAS_UBAH = ['/login', '/logout'];
+/*
+ * PENYIMPANGAN KHUSUS untuk peran **sales** (permintaan user: *"sales dan admin juga bisa memasukkan
+ * jumlah penjualan"*): rute penginputan penjualan `/sesi/:id/jual` boleh dikirim oleh sales — TETAPI
+ * hanya untuk surat jalan miliknya sendiri. Middleware ini HANYA melewatkan jalurnya; pemeriksaan
+ * pemiliknya dikerjakan di dalam rutenya lewat `bolehJual()` (lapis keduanya), jadi jangan menaruh
+ * jalur lain di daftar ini tanpa penjagaan serupa.
+ */
+const RE_JALUR_SALES = /^\/sesi\/\d+\/jual$/;
 app.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD') return next();
   if (JALUR_BEBAS_UBAH.some((p) => req.path === p || req.path.startsWith(p + '/'))) return next();
   if (!req.petugas) return res.status(401).json({ ok: false, pesan: 'Belum login' });
   if (auth.bolehUbah(req)) return next();
+  if (RE_JALUR_SALES.test(req.path)) return next();
   if (req.path.startsWith('/api/')) return res.status(403).json({ ok: false, pesan: 'Peran Sales hanya bisa melihat data' });
   return balik(req, res, '/', 'Peran Sales hanya bisa melihat data — perubahan tidak diizinkan');
 });
@@ -172,9 +183,61 @@ function bedaItem(sebelum, sesudah) {
 }
 
 const boleB = (s) => s.status === 'draft';
-const boleT = (s) => s.status === 'kirim' || s.status === 'rekap';
+/*
+ * Kolom T (tambahan) & Retur boleh diisi saat surat jalan sudah terbit — termasuk status baru
+ * `jual` (**Menunggu Rekap**): selama rekap belum dimulai, barang masih bisa ditambah/dikembalikan.
+ */
+/*
+ * Penjagaan status. `tunggu_jual` ("Ongoing") = surat jalan sudah terbit tetapi kolom P
+ * belum diisi; `kirim` adalah status LAMA dengan arti yang sama (data/backup lama) — keduanya diperlakukan
+ * SAMA di semua penjagaan ini.
+ */
+const STATUS_JUAL_LAMA = ['tunggu_jual', 'kirim'];
+const boleT = (s) => STATUS_JUAL_LAMA.includes(s.status) || s.status === 'jual' || s.status === 'rekap';
 const boleKS = (s) => s.status === 'rekap';
+/**
+ * STATUS AKHIR setelah rekap DIKUNCI (dipakai `POST /sesi/:id/selesai` dan `/kunci-lanjut`).
+ *
+ * Kalau penjualan (kolom P) belum diisi sama sekali, perjalanan **TIDAK ditandai `selesai`** melainkan
+ * kembali ke **`tunggu_jual`** — permintaan user: *"Saat rekap sudah, di kunci dan penjualan masih
+ * kosong, maka statusnya tidak selesai, tapi menunggu data penjualan, dan laporan nya masih tampil di
+ * dasbor"*. Akibatnya transaksi itu TETAP muncul di dasbor (dasbor hanya menampilkan draft & ongoing)
+ * dan kolom P masih bisa diisi; angka rekapnya (B/T/K/S) sudah tersimpan sehingga tinggal menjalankan
+ * rekap lagi (angkanya sudah terisi) lalu mengunci untuk menyelesaikannya.
+ *
+ * Jangan mengganti ini dengan penolakan: pemilik aplikasi memilih **rekap tetap boleh dikunci** walau
+ * penjualan kosong (lihat komentar di POST /sesi/:id/selesai).
+ */
+const statusUsaiKunciRekap = (tot) => ((Number(tot.p) || 0) > 0 ? 'selesai' : 'tunggu_jual');
+/** Kolom P (jumlah terjual menurut sales) boleh diisi/diperbaiki selama rekap belum dimulai. */
+/*
+ * Kolom P (penjualan) boleh diisi/diperbaiki selama belum selesai — termasuk saat **rekap** sedang
+ * berjalan (permintaan user: "masih boleh mengisi/memperbaiki penjualan selama masih tahap rekap").
+ */
+const boleJ = (s) => STATUS_JUAL_LAMA.includes(s.status) || s.status === 'jual' || s.status === 'rekap';
 const terkunci = (s) => s.status === 'selesai';
+
+/**
+ * Siapa yang boleh mengisi JUMLAH PENJUALAN (kolom P)?
+ *
+ * Permintaan user: *"sales dan admin juga bisa memasukkan jumlah penjualan"* + *"sales bisa mengimput
+ * data p saat surat jalan ongoing"*, dengan keputusan pemilik aplikasi: **sales hanya untuk surat jalan
+ * yang nama sales-nya sama dengan nama pengguna yang sedang login** — dan namanya dicocokkan secara
+ * **MIRIP** (`util.namaSalesSama()`: beda huruf besar/kecil, spasi, ejaan **h**, atau huruf kembar
+ * dianggap sama).
+ *
+ * Alasannya nyata: di data produksi petugas bernama "Zainal Ardi" sedangkan surat jalan miliknya bernama
+ * "Zainal Ardhi", sehingga dengan perbandingan persis sales itu selalu ditolak saat mengisi kolom P.
+ *
+ * Administrator & admin gudang boleh untuk semua surat jalan (mereka memang boleh mengubah data).
+ * Dipakai rute GET/POST `/sesi/:id/jual` DAN ikon "Penjualan" di halaman perjalanan & Overview supaya
+ * UI dan server tidak pernah berbeda.
+ */
+function bolehJual(req, sesi) {
+  if (auth.bolehUbah(req)) return true;
+  if (!req.petugas || !sesi) return false;
+  return util.namaSalesSama(req.petugas.nama, sesi.sales_nama);
+}
 
 // ---------------------------------------------------------------- login & petugas
 app.get('/login', (req, res) => {
@@ -982,6 +1045,9 @@ app.get('/sesi/:id', (req, res) => {
         // (permintaan user: "Buat Administrator bisa menghapus barang tambahan")
         bolehHapusEntri: auth.admin(req) && sesi.status !== 'selesai',
         bolehKelolaPetugas: auth.admin(req),
+        // ikon "Penjualan" (kolom P): administrator/admin gudang untuk semua surat jalan, sales hanya
+        // untuk surat jalan yang nama sales-nya sama dengan nama pengguna yang login — permintaan user.
+        bolehJual: bolehJual(req, sesi),
       }),
     })
   );
@@ -1007,6 +1073,9 @@ app.get('/sesi/:id/overview', (req, res) => {
         // Overview = halaman hanya-baca, tetapi tombol hapus penginputan tetap ditampilkan untuk
         // administrator selama perjalanannya belum selesai (permintaan user).
         bolehHapusEntri: auth.admin(req) && sesi.status !== 'selesai',
+        // ikon "Penjualan" di pojok kanan atas (baris Dasbor/Laporan membuka Overview, jadi tanpa ikon
+        // ini sales tidak punya jalan masuk ke halaman penjualan)
+        bolehJual: bolehJual(req, sesi),
       }),
     })
   );
@@ -1071,20 +1140,44 @@ app.post('/sesi/:id/hapus', (req, res) => {
  * dikosongkan (`selesai_at`/`rekap_at`/`dikunci_at`) supaya tanggal acuan laporan tidak memakai tanggal
  * lama yang sudah dibatalkan. Angka B/T/K/S dan seluruh entri penginputan/memo tetap utuh.
  */
-const UNDO_TURUN = { selesai: 'rekap', rekap: 'kirim', kirim: 'draft' };
-const UNDO_HAPUS_WAKTU = { selesai: 'selesai_at', rekap: 'rekap_at', kirim: 'dikunci_at' };
+/*
+ * UNDO satu langkah. Khusus `rekap`, tujuannya BERGANTUNG pada penjualannya: kalau kolom P sudah ada
+ * isinya → `jual` (Menunggu Rekap), kalau masih kosong → `tunggu_jual` (Ongoing) — supaya
+ * statusnya jujur menggambarkan keadaan data. Diputuskan di dalam rute (butuh total P).
+ */
+const UNDO_TURUN = { selesai: 'rekap', jual: 'tunggu_jual', tunggu_jual: 'draft', kirim: 'draft' };
+/*
+ * Cap waktu yang dikosongkan saat statusnya dibatalkan — `tunggu_jual` & `kirim` (arti sama: surat jalan
+ * sudah terbit) membatalkan `dikunci_at`.
+ */
+const UNDO_HAPUS_WAKTU = { selesai: 'selesai_at', rekap: 'rekap_at', tunggu_jual: 'dikunci_at', kirim: 'dikunci_at' };
 app.post('/sesi/:id/undo', (req, res) => {
   // form bisa mengirim `balik` supaya setelah undo tetap di halaman asal (mis. /laporan)
   const balikKe = String(req.body.balik || '') === '/laporan' ? '/laporan' : '/';
   const sesi = q.sesiById(Number(req.params.id));
   if (!sesi) return balik(req, res, balikKe, 'Perjalanan tidak ditemukan');
   if (!hanyaAdmin(req, res, `/sesi/${sesi.id}`, 'Hanya administrator yang boleh meng-undo surat jalan')) return;
-  const turun = UNDO_TURUN[sesi.status];
+  let turun = UNDO_TURUN[sesi.status];
+  if (util.perluDataPenjualan(sesi)) {
+    /*
+     * "Menunggu Data Penjualan" = rekap sudah dikunci tanpa penjualan, jadi langkah terakhir yang
+     * diambil adalah MENGUNCI REKAP → undo satu langkah membuka kembali tahap `rekap` (angka K & S
+     * tidak diubah, cap `dikunci_at` dikosongkan) supaya penjualan masih bisa diisi lalu dikunci lagi.
+     */
+    turun = 'rekap';
+  } else if (sesi.status === 'rekap') {
+    // rekap → jual kalau penjualan sudah ada isinya, kalau belum → tunggu_jual (lihat UNDO_TURUN)
+    turun = (Number(q.itemTotals(sesi.id).p) || 0) > 0 ? 'jual' : 'tunggu_jual';
+  }
   if (!turun) {
     return balik(req, res, balikKe, `Surat jalan ${noSurat(sesi)} masih draft — belum ada yang perlu di-undo`);
   }
-  const label = { draft: 'Draft', kirim: 'Ongoing (surat jalan terbit)', rekap: 'Sedang Rekap', selesai: 'Selesai' };
-  const sebelum = label[sesi.status] || sesi.status;
+  const label = { draft: 'Draft', tunggu_jual: 'Ongoing', kirim: 'Surat Jalan Terbit', jual: 'Menunggu Rekap', rekap: 'Sedang Rekap', selesai: 'Selesai' };
+  /*
+   * `tunggu_jual` yang REKAPNYA sudah dikunci (cap `rekap_at` terisi) ditulis "Menunggu Data Penjualan",
+   * bukan "Ongoing" — sama dengan yang tampil di layar (lib/util.js -> statusSesi).
+   */
+  const sebelum = util.perluDataPenjualan(sesi) ? 'Menunggu Data Penjualan' : label[sesi.status] || sesi.status;
   const sesudah = label[turun] || turun;
   q.sesiUndoStatus(sesi.id, turun, UNDO_HAPUS_WAKTU[sesi.status]);
   audit(req, 'jalan-diundo', 'sesi', sesi.id,
@@ -1159,8 +1252,13 @@ app.post('/sesi/:id/kunci', (req, res) => {
   if (sesi.status !== 'draft') return balik(req, res, `/sesi/${sesi.id}`, 'Perjalanan ini sudah dikunci');
   const tot = q.itemTotals(sesi.id);
   if (tot.b <= 0) return balik(req, res, `/sesi/${sesi.id}/ambil`, 'Belum ada barang yang dibawa — isi jumlahnya dulu');
-  q.sesiStatus(sesi.id, 'kirim', 'dikunci_at');
-  audit(req, 'dikunci', 'sesi', sesi.id, `Barang dibawa dikunci — total ${tot.b} barang (status: ongoing)`, [{ kolom: 'Total dibawa (B)', sesudah: tot.b }]);
+  /*
+   * Sesudah dikunci, statusnya **tunggu_jual** ("Ongoing") — permintaan user: surat jalan
+   * tetap bisa direkap, tetapi selama penjualan belum diinput statusnya menandai bahwa data itu masih
+   * ditunggu. Berubah menjadi `jual` begitu penjualan disimpan (`POST /sesi/:id/jual`).
+   */
+  q.sesiStatus(sesi.id, 'tunggu_jual', 'dikunci_at');
+  audit(req, 'dikunci', 'sesi', sesi.id, `Barang dibawa dikunci — total ${tot.b} barang (status: Ongoing)`, [{ kolom: 'Total dibawa (B)', sesudah: tot.b }]);
   balik(req, res, `/sesi/${sesi.id}`, 'Data dikunci. Surat jalan siap dicetak.');
 });
 
@@ -1186,6 +1284,21 @@ function dataEntri(sesiId) {
  * catatan otomatis selalu mengikuti data dan tidak pernah bisa diubah dari layar.
  */
 function barisAutoSesi(sesiId) {
+  /*
+   * Daftar barang per penginputan — dipakai catatan PENGEMBALIAN supaya nama barang yang dikembalikan
+   * ikut dicantumkan (permintaan user: *"Jika mengembalikan barang, cantumkan nama barang yang di
+   * kembalikan di catatan laporan"*).
+   */
+  const rincian = rincianPerEntri(sesiId);
+  /*
+   * Rincian barang yang DIAMBIL SALES LAIN dari perjalanan ini — entri itu milik perjalanan pengambil,
+   * jadi `rincianPerEntri(sesiId)` di atas tidak memuatnya (filternya per `tb.sesi_id`).
+   */
+  const rincianAmbil = new Map();
+  q.tambahanItemDariSesi(sesiId).forEach((it) => {
+    if (!rincianAmbil.has(it.batch_id)) rincianAmbil.set(it.batch_id, []);
+    rincianAmbil.get(it.batch_id).push({ nama: it.nama, qty: it.qty, kurangi_b: Number(it.kurangi_b) || 0 });
+  });
   const entries = q.tambahanBatchList(sesiId).map((b) => {
     // Permintaan user: pengembalian barang ke gudang punya catatan otomatis SENDIRI (bukan kalimat
     // pengambilan) karena barangnya keluar dari kolom Dibawa, bukan menambah kolom T.
@@ -1200,6 +1313,7 @@ function barisAutoSesi(sesiId) {
             total: b.total,
             // permintaan user: setiap catatan menyebutkan siapa yang mencatatnya ("(dicatat oleh …)")
             petugas: b.petugas,
+            items: rincian.get(b.id) || [],
           })
         : barisPengambilan({
             tanggalPendek: tanggalPendek(b.tanggal),
@@ -1208,6 +1322,8 @@ function barisAutoSesi(sesiId) {
             kodeSumber: b.kode_sumber,
             total: b.total,
             petugas: b.petugas,
+            // permintaan user: "jika di ambil barang apa yang di ambil" → daftar barang ikut ditulis
+            items: rincian.get(b.id) || [],
           }),
     };
   });
@@ -1220,6 +1336,8 @@ function barisAutoSesi(sesiId) {
       oleh: b.pengambil,
       total: b.total,
       petugas: b.petugas,
+      // barang apa yang diambil sales lain itu (permintaan user)
+      items: itemsDiambil(rincianAmbil.get(b.id)),
     }),
   }));
   return entries.concat(ambilan);
@@ -1239,9 +1357,21 @@ function rincianPerEntri(sesiId) {
   const peta = new Map();
   q.tambahanItemSemuaSesi(sesiId).forEach((it) => {
     if (!peta.has(it.batch_id)) peta.set(it.batch_id, []);
-    peta.get(it.batch_id).push({ kode: it.kode, nama: it.nama, qty: it.qty });
+    // `kurangi_b` = jumlah yang BENAR-BENAR dipotong dari surat jalan sumber (0 untuk entri gudang &
+    // data lama) — dipakai catatan "telah diambil barangnya oleh …" supaya daftar barangnya cocok
+    // dengan total yang tercatat.
+    peta.get(it.batch_id).push({ kode: it.kode, nama: it.nama, qty: it.qty, kurangi_b: Number(it.kurangi_b) || 0 });
   });
   return peta;
+}
+/**
+ * Daftar barang untuk catatan "telah diambil barangnya oleh …" (perjalanan SUMBER): pakai `kurangi_b`
+ * (jumlah yang benar-benar dipotong) kalau ada; kalau tidak ada (entri lama), pakai qty entrinya.
+ */
+function itemsDiambil(daftar) {
+  const asli = daftar || [];
+  const adaKurangi = asli.some((x) => Number(x.kurangi_b) > 0);
+  return asli.map((x) => ({ nama: x.nama, qty: adaKurangi ? Number(x.kurangi_b) || 0 : x.qty }));
 }
 
 app.get('/sesi/:id/tambahan', (req, res) => {
@@ -1674,15 +1804,100 @@ app.post('/sesi/:id/retur', (req, res) => {
   balik(req, res, tetap ? `/sesi/${sesi.id}/retur` : `/sesi/${sesi.id}`, pesan);
 });
 
+// --- PENJUALAN (kolom P): jumlah barang yang dijual menurut sales
+/*
+ * Permintaan user: "Pada status surat jalan ongoing, sales harus memasukkan dulu jumlah barang yang di
+ * jual mereka ke surat jalan yang ongoing, setelah sales memasukkan barang penjualan mereka surat
+ * berubah status menjadi menunggu rekap, sales dan admin juga bisa memasukkan jumlah penjualan,
+ * halaman pengimputan nya seperti halaman tambahan barang, selisih di hitung dari s dikurangi p".
+ *
+ * Keputusan pemilik aplikasi (jawaban pilihan):
+ *  - status `jual` (**Menunggu Rekap**) adalah TAHAP BARU di antara kirim dan rekap
+ *    (draft → kirim → jual → rekap → selesai);
+ *  - yang boleh mengisi: **administrator & admin gudang untuk semua surat jalan**, dan **sales HANYA
+ *    untuk surat jalan yang nama sales-nya sama dengan nama pengguna yang sedang login** (`bolehJual()`);
+ *  - selisih penjualan = **S − P**; selisih lama (B+T−K−S) tetap ditampilkan sebagai keterangan tambahan.
+ */
+app.get('/sesi/:id/jual', (req, res) => {
+  const sesi = ambilSesi(req, res);
+  if (!sesi) return;
+  if (!bolehJual(req, sesi))
+    return balik(req, res, `/sesi/${sesi.id}`, `Hanya sales ${sesi.sales_nama || '-'} (atau admin gudang/administrator) yang boleh mengisi jumlah penjualan surat jalan ini`);
+  if (!boleJ(sesi))
+    return balik(req, res, `/sesi/${sesi.id}`, terkunci(sesi) ? 'Perjalanan sudah selesai — jumlah penjualan tidak bisa diubah' : 'Jumlah penjualan diisi setelah surat jalan terbit dan sebelum rekap dimulai');
+  const v = vJual.render({
+    sesi,
+    items: q.itemBySesi(sesi.id),
+    base: req.BASE,
+    pesan: req.query.pesan,
+    // nama petugas yang mengisi (ditampilkan di kartu keterangan, seperti layar tambahan)
+    petugas: req.petugas ? req.petugas.nama : '',
+  });
+  res.send(H(req, { judul: `Penjualan · ${noSurat(sesi)}`, base: req.BASE, isi: v.isi, scriptExtra: v.script }));
+});
+
+app.post('/sesi/:id/jual', (req, res) => {
+  const sesi = ambilSesi(req, res);
+  if (!sesi) return;
+  if (!bolehJual(req, sesi))
+    return balik(req, res, `/sesi/${sesi.id}`, `Hanya sales ${sesi.sales_nama || '-'} (atau admin gudang/administrator) yang boleh mengisi jumlah penjualan surat jalan ini`);
+  if (!boleJ(sesi))
+    return balik(req, res, `/sesi/${sesi.id}`, terkunci(sesi) ? 'Perjalanan sudah selesai — jumlah penjualan tidak bisa diubah' : 'Jumlah penjualan diisi setelah surat jalan terbit dan sebelum rekap dimulai');
+
+  const sebelum = q.itemBySesi(sesi.id);
+  simpanItem(req, sesi.id, 'p');
+  const sesudah = q.itemBySesi(sesi.id);
+  const total = sesudah.reduce((a, i) => a + (Number(i.p) || 0), 0);
+  const beda = sebelum
+    .map((lama) => {
+      const baru = sesudah.find((x) => x.id === lama.id);
+      return baru && Number(lama.p) !== Number(baru.p) ? { nama: baru.nama, kolom: 'P', sebelum: Number(lama.p) || 0, sesudah: Number(baru.p) || 0 } : null;
+    })
+    .filter(Boolean);
+
+  const pertama = STATUS_JUAL_LAMA.includes(sesi.status);   // tunggu_jual / kirim (lama)
+  if (pertama) q.sesiStatus(sesi.id, 'jual');
+  /*
+   * Catat SIAPA yang menginput penjualan ini (permintaan user: keterangan "REKAP SELESAI & DIKUNCI" pada
+   * dokumen laporan menyebut "Penjualan diinput oleh: NAMA"). Disimpan setiap kali penjualan disimpan,
+   * jadi nama yang tertulis = petugas yang terakhir mengisi/mengoreksi kolom P.
+   */
+  if (req.petugas) q.sesiSetJualOleh(sesi.id, req.petugas.nama);
+  if (beda.length)
+    audit(req, pertama ? 'penjualan-diisi' : 'penjualan-diubah', 'sesi', sesi.id,
+      `Jumlah penjualan (P) ${pertama ? 'diisi' : 'diubah'} oleh ${req.petugas ? req.petugas.nama : '-'} — total terjual ${total} barang, status ${pertama ? 'Menunggu Rekap' : 'tetap Menunggu Rekap'}`,
+      beda);
+
+  const tetap = String(req.body._aksi || '') === 'tetap';
+  const sedangRekap = sesi.status === 'rekap';
+  balik(
+    req,
+    res,
+    tetap ? `/sesi/${sesi.id}/jual` : `/sesi/${sesi.id}`,
+    `Jumlah penjualan tersimpan — ${angka(total)} barang terjual.` +
+      (pertama ? ' Status surat jalan menjadi MENUNGGU REKAP.' : sedangRekap ? ' Hitungan rekap tetap berjalan — penjualan ini bisa diperbaiki selama belum selesai.' : '')
+  );
+});
+
 // --- rekap: hitung barang kembali
 app.post('/sesi/:id/rekap/mulai', (req, res) => {
   const sesi = ambilSesi(req, res);
   if (!sesi) return;
   if (sesi.status === 'selesai') return balik(req, res, `/sesi/${sesi.id}`, 'Perjalanan sudah selesai');
   if (sesi.status === 'draft') return balik(req, res, `/sesi/${sesi.id}`, 'Kunci data barang dibawa dulu sebelum rekap');
-  if (sesi.status === 'kirim') q.sesiStatus(sesi.id, 'rekap', 'rekap_at');
+  /*
+   * REKAP BOLEH DIMULAI WALAU PENJUALAN BELUM DIINPUT — permintaan user: *"Buat surat jalan tetap bisa di
+   * rekap meski penjualan bisa di imput, tapi jika penjualan belum di imput statusnya menunggu data
+   * penjualan"*. Jadi penolakan lama (total P > 0) DIHAPUS; kalau penjualannya masih kosong, rekap tetap
+   * jalan dan statusnya jujur ditandai "Ongoing" (kolom P masih bisa diisi selama rekap).
+   * Peringatan di layar ada di popup konfirmasi tombol "Mulai rekap" (`views/sesi.js → kotakRekap()`).
+   */
+  const tot = q.itemTotals(sesi.id);
+  if (STATUS_JUAL_LAMA.includes(sesi.status) || sesi.status === 'jual') q.sesiStatus(sesi.id, 'rekap', 'rekap_at');
   if (req.petugas) q.sesiSetRekapOleh(sesi.id, req.petugas.nama);
-  audit(req, 'rekap-dimulai', 'sesi', sesi.id, `Rekap dimulai oleh ${req.petugas ? req.petugas.nama : '-'}`);
+  audit(req, 'rekap-dimulai', 'sesi', sesi.id,
+    `Rekap dimulai oleh ${req.petugas ? req.petugas.nama : '-'} — ` +
+      ((Number(tot.p) || 0) > 0 ? `penjualan (P) sudah diisi: ${angka(tot.p)} barang` : 'PENJUALAN (P) BELUM DIISI (status Ongoing)'));
   balik(req, res, `/sesi/${sesi.id}/rekap`, 'ReKap dimulai — scan barcode barang yang dikembalikan');
 });
 
@@ -1844,64 +2059,84 @@ app.post('/sesi/:id/kunci-lanjut', (req, res) => {
     .itemBySesi(sesi.id)
     .filter((i) => (i.nb || 0) > 0)
     .map((i) => ({ it: i, n: i.nb }));
-  if (!nilai.length) {
-    return balik(
-      req,
-      res,
-      `/sesi/${sesi.id}/rekap`,
-      'Isi dulu kolom "B Berikutnya" untuk barang yang akan dibawa sales berikutnya — rekap belum bisa dikunci'
-    );
-  }
 
+  /*
+   * B BERIKUTNYA KOSONG → REKAP TETAP BOLEH DIKUNCI — permintaan user: *"Rekap tetap bisa dilakukan meski
+   * berikutnya tidak di isi dengan peringatan dan konfirmasi"*. Penolakan lama ("Isi dulu kolom B
+   * Berikutnya … rekap belum bisa dikunci") DIHAPUS; kalau kolomnya kosong maka **tidak ada surat jalan
+   * baru yang dibuat** (memang tidak ada barang yang diteruskan) dan pengguna diberi tahu di pesannya.
+   * Peringatan + konfirmasinya ada di popup tombol (dipilih dinamis oleh skrip halaman rekap).
+   */
   const salesNama = String(sesi.sales_nama || '').trim();
-  if (!salesNama) return balik(req, res, `/sesi/${sesi.id}/rekap`, 'Perjalanan ini belum punya nama sales');
+  if (nilai.length && !salesNama) return balik(req, res, `/sesi/${sesi.id}/rekap`, 'Perjalanan ini belum punya nama sales');
   const tanggal = hariIni();
 
-  const kode = kodeBaru(salesNama, q.sesiAll());
-  const info = q.sesiInsert({ tanggal, sales_nama: salesNama, catatan: '', kode_unik: kode });
-  const id = info.lastInsertRowid;
-  q.itemSinkron(id);
-  const jalan = db().transaction(() => {
-    nilai.forEach((x) => {
-      q.itemSetBProduk(id, x.it.produk_id, x.n);
-      q.itemSetJumlah(x.it.id, 'nb', 0);   // rencana sudah dipakai → kolom B Berikutnya dikosongkan lagi
+  /*
+   * Buat surat jalan berikutnya HANYA kalau ada barang di kolom B Berikutnya.
+   */
+  let kode = '';
+  let idBaru = 0;
+  let total = 0;
+  if (nilai.length) {
+    kode = kodeBaru(salesNama, q.sesiAll());
+    const info = q.sesiInsert({ tanggal, sales_nama: salesNama, catatan: '', kode_unik: kode });
+    idBaru = info.lastInsertRowid;
+    q.itemSinkron(idBaru);
+    const jalan = db().transaction(() => {
+      nilai.forEach((x) => {
+        q.itemSetBProduk(idBaru, x.it.produk_id, x.n);
+        q.itemSetJumlah(x.it.id, 'nb', 0);   // rencana sudah dipakai → kolom B Berikutnya dikosongkan lagi
+      });
     });
-  });
-  jalan();
-  q.salesTambah(salesNama);
-  q.sesiSetDibuatOleh(id, req.petugas ? req.petugas.nama : '');
-  const total = nilai.reduce((a, x) => a + x.n, 0);
-  audit(req, 'perjalanan-baru', 'sesi', id, `Surat jalan ${kode} dibuat dari REKAP ${noSurat(sesi)} — sales ${salesNama}, tanggal ${tanggal}, ${angka(total)} barang dibawa`, [
-    { kolom: 'Kode surat jalan', sesudah: kode },
-    { kolom: 'Dibuat dari rekap', sesudah: noSurat(sesi) },
-    { kolom: 'Sales', sesudah: salesNama },
-    { kolom: 'Tanggal', sesudah: tanggal },
-    { kolom: 'Jumlah barang dibawa', sesudah: total },
-  ]);
+    jalan();
+    q.salesTambah(salesNama);
+    q.sesiSetDibuatOleh(idBaru, req.petugas ? req.petugas.nama : '');
+    total = nilai.reduce((a, x) => a + x.n, 0);
+    audit(req, 'perjalanan-baru', 'sesi', idBaru, `Surat jalan ${kode} dibuat dari REKAP ${noSurat(sesi)} — sales ${salesNama}, tanggal ${tanggal}, ${angka(total)} barang dibawa`, [
+      { kolom: 'Kode surat jalan', sesudah: kode },
+      { kolom: 'Dibuat dari rekap', sesudah: noSurat(sesi) },
+      { kolom: 'Sales', sesudah: salesNama },
+      { kolom: 'Tanggal', sesudah: tanggal },
+      { kolom: 'Jumlah barang dibawa', sesudah: total },
+    ]);
+  }
 
-  // baru sesudah surat jalannya benar-benar dibuat: kunci rekapnya
-  q.sesiStatus(sesi.id, 'selesai', 'selesai_at');
-  if (req.petugas) q.sesiSetRekapOleh(sesi.id, req.petugas.nama);
+  /*
+   * Kunci rekapnya (dijalankan baik ada surat jalan baru maupun tidak).
+   * Status akhirnya BERGANTUNG penjualannya (lihat `statusUsaiKunciRekap`): kalau penjualan (P) masih
+   * kosong, rekap tetap dikunci tetapi statusnya kembali ke `tunggu_jual` (Ongoing) supaya
+   * transaksinya tetap tampil di dasbor dan penjualannya bisa diisi — permintaan user.
+   */
   const totAkhir = q.itemTotals(sesi.id);
+  const stAkhir = statusUsaiKunciRekap(totAkhir);
+  q.sesiStatus(sesi.id, stAkhir, stAkhir === 'selesai' ? 'selesai_at' : 'dikunci_at');
+  if (req.petugas) q.sesiSetRekapOleh(sesi.id, req.petugas.nama);
   audit(
     req,
     'selesai',
     'sesi',
     sesi.id,
-    `ReKap ${noSurat(sesi)} selesai & dikunci oleh ${req.petugas ? req.petugas.nama : '-'} — B ${totAkhir.b}, T ${totAkhir.t}, K ${totAkhir.k}, S ${totAkhir.s} (surat jalan ${kode} dibuat)`,
+    `ReKap ${noSurat(sesi)} selesai & dikunci oleh ${req.petugas ? req.petugas.nama : '-'} — B ${totAkhir.b}, T ${totAkhir.t}, K ${totAkhir.k}, S ${totAkhir.s} ` +
+      (kode ? `(surat jalan ${kode} dibuat)` : '(TANPA surat jalan berikutnya — kolom B Berikutnya kosong)') +
+      (stAkhir === 'selesai' ? '' : ' — TANPA penjualan (P), status kembali Ongoing'),
     [
       { kolom: 'B (dibawa)', sesudah: totAkhir.b },
       { kolom: 'T (tambahan)', sesudah: totAkhir.t },
       { kolom: 'K (kembali)', sesudah: totAkhir.k },
       { kolom: 'S (setoran)', sesudah: totAkhir.s },
-      { kolom: 'Surat jalan berikutnya', sesudah: kode },
+      { kolom: 'Surat jalan berikutnya', sesudah: kode || '(tidak dibuat — B Berikutnya kosong)' },
+      { kolom: 'Status', sesudah: stAkhir === 'selesai' ? 'Selesai' : 'Ongoing (menunggu data penjualan)' },
     ]
   );
   balik(
     req,
     res,
-    `/sesi/${id}`,
-    `ReKap ${noSurat(sesi)} selesai & dikunci. Surat jalan ${kode} dibuat untuk sales ${salesNama} — ${angka(total)} barang sudah terisi di kolom Dibawa (B).`
+    kode ? `/sesi/${idBaru}` : `/sesi/${sesi.id}`,
+    stAkhir !== 'selesai'
+      ? `ReKap ${noSurat(sesi)} dikunci${kode ? ` & surat jalan ${kode} dibuat` : ' (tanpa surat jalan berikutnya)'} TANPA penjualan (P) — status kembali Ongoing: isi penjualan dulu, lalu jalankan rekap lagi dan kunci untuk menyelesaikan.`
+      : kode
+        ? `ReKap ${noSurat(sesi)} selesai & dikunci. Surat jalan ${kode} dibuat untuk sales ${salesNama} — ${angka(total)} barang sudah terisi di kolom Dibawa (B).`
+        : `ReKap ${noSurat(sesi)} selesai & dikunci TANPA surat jalan berikutnya (kolom B Berikutnya masih kosong).`
   );
 });
 
@@ -1916,16 +2151,38 @@ app.post('/sesi/:id/selesai', (req, res) => {
    * Dipanggil dari halaman perjalanan (tanpa field k_/s_) juga aman: tidak ada yang berubah.
    */
   simpanRekap(req, sesi);
-  q.sesiStatus(sesi.id, 'selesai', 'selesai_at');
-  if (req.petugas) q.sesiSetRekapOleh(sesi.id, req.petugas.nama);
+  /*
+   * Status akhir BERGANTUNG penjualannya — `statusUsaiKunciRekap()`: kalau kolom P masih kosong,
+   * perjalanan TIDAK ditandai "Selesai" melainkan kembali ke `tunggu_jual` (Ongoing) supaya tetap
+   * tampil di dasbor dan penjualannya bisa diisi (permintaan user). Angka rekapnya sudah tersimpan,
+   * jadi tinggal menjalankan rekap lagi lalu kunci untuk menyelesaikannya.
+   */
   const totAkhir = q.itemTotals(sesi.id);
-  audit(req, 'selesai', 'sesi', sesi.id, `Rekap selesai & dikunci oleh ${req.petugas ? req.petugas.nama : '-'} — B ${totAkhir.b}, T ${totAkhir.t}, K ${totAkhir.k}, S ${totAkhir.s}`, [
-    { kolom: 'B (dibawa)', sesudah: totAkhir.b },
-    { kolom: 'T (tambahan)', sesudah: totAkhir.t },
-    { kolom: 'K (kembali)', sesudah: totAkhir.k },
-    { kolom: 'S (setoran)', sesudah: totAkhir.s },
-  ]);
-  balik(req, res, `/sesi/${sesi.id}`, 'ReKap selesai & dikunci. Laporan lengkap siap dicetak.');
+  const stAkhir = statusUsaiKunciRekap(totAkhir);
+  q.sesiStatus(sesi.id, stAkhir, stAkhir === 'selesai' ? 'selesai_at' : 'dikunci_at');
+  if (req.petugas) q.sesiSetRekapOleh(sesi.id, req.petugas.nama);
+  audit(
+    req,
+    'selesai',
+    'sesi',
+    sesi.id,
+    `Rekap ${stAkhir === 'selesai' ? 'selesai & dikunci' : 'DIKUNCI TANPA penjualan (P) — status kembali Ongoing (menunggu data penjualan)'} oleh ${req.petugas ? req.petugas.nama : '-'} — B ${totAkhir.b}, T ${totAkhir.t}, K ${totAkhir.k}, S ${totAkhir.s}`,
+    [
+      { kolom: 'B (dibawa)', sesudah: totAkhir.b },
+      { kolom: 'T (tambahan)', sesudah: totAkhir.t },
+      { kolom: 'K (kembali)', sesudah: totAkhir.k },
+      { kolom: 'S (setoran)', sesudah: totAkhir.s },
+      { kolom: 'Status', sesudah: stAkhir === 'selesai' ? 'Selesai' : 'Ongoing (menunggu data penjualan)' },
+    ]
+  );
+  balik(
+    req,
+    res,
+    `/sesi/${sesi.id}`,
+    stAkhir === 'selesai'
+      ? 'ReKap selesai & dikunci. Laporan lengkap siap dicetak.'
+      : 'ReKap dikunci TANPA penjualan (P). Status surat jalan kembali ONGOING (menunggu data penjualan) dan tetap tampil di dasbor — isi penjualan dulu, lalu jalankan rekap lagi dan kunci untuk menyelesaikannya.'
+  );
 });
 
 app.post('/sesi/:id/catatan', (req, res) => {
@@ -2588,7 +2845,11 @@ app.post('/setting/logo/simpan', (req, res) => {
     kop_judul: b.kop_judul,
     kop_sub: b.kop_sub,
     kop_garis: dariKotak(b.kop_garis),
-    ttd_tampil: dariKotak(b.ttd_tampil),
+    /*
+     * `ttd_tampil` TIDAK lagi disimpan dari formulir: blok tanda tangan sudah dihapus dari semua dokumen
+     * (permintaan user), jadi pengaturannya tidak berpengaruh apa pun. Nilainya di database dibiarkan
+     * apa adanya supaya tidak perlu migrasi.
+     */
   });
   const sesudah = setelanSemua();
   const beda = Object.keys(sesudah)
@@ -2627,13 +2888,22 @@ app.post('/setting/logo/hapus', (req, res) => {
  */
 app.get('/cetak/contoh', (req, res) => {
   if (!auth.admin(req)) return balik(req, res, '/', 'Hanya administrator yang boleh membuka contoh surat');
+  /*
+   * Status contoh = `rekap` supaya dokumennya sudah melewati penghitungan barang kembali: dengan begitu
+   * perbandingan **Setoran (S) vs Penjualan (P)** aktif, sehingga contoh surat memperlihatkan penanda merah
+   * selisih + catatan otomatis "Jumlah setoran lebih/kurang N (NAMA BARANG)" seperti permintaan user
+   * (*"Pada surat jalan percobaan sebagai contoh, buat catatan otomatis barang yang selisih 'jumlah setoran
+   * kurang 00' karena YSL bawa satu tapi tidak dikembalikan"*).
+   * Angka **YSL 8410** sengaja dibuat seperti kasus nyata di data produksi (surat jalan PER004):
+   * dibawa 1, tidak dikembalikan (K 0) → setoran 1, sedangkan penjualan yang dilaporkan 0.
+   */
   const contoh = {
     id: 0,
     kode_unik: 'CONTOH',
     sales_nama: 'CONTOH SALES',
     tanggal: hariIni(),
     catatan: 'Dokumen contoh — data karangan untuk melihat hasil pengaturan logo & layout surat.',
-    status: 'kirim',
+    status: 'rekap',
   };
   const nama = [
     'Kacamata Hitam Polarized', 'Sunglasses Retro Classic', 'Kacamata Sport Anti UV', 'Sunglasses Kotak Premium',
@@ -2642,16 +2912,27 @@ app.get('/cetak/contoh', (req, res) => {
   ];
   const items = [];
   for (let i = 0; i < 28; i++) {
+    /*
+     * Angka contoh: sebagian barang kembali pas (K = B) sehingga setorannya 0, sebagian terjual penuh
+     * (P = S), dan **satu barang sengaja selisih** supaya catatan otomatisnya terlihat.
+     */
+    const b = 1 + (i % 5);
+    const kembali = i % 3 === 0 ? b : Math.floor(b / 2);       // K sebagian/sepenuhnya
+    const s = Math.max(0, b - kembali);                        // setoran = B − K (T contoh = 0)
     items.push({
       id: i + 1,
       kode: `SKU-${String(i + 1).padStart(3, '0')}`,
       nama: `${nama[i % nama.length]} ${String.fromCharCode(65 + (i % 26))}`,
-      b: 1 + (i % 5),
-      t: i % 4,
-      k: 0,
-      s: null,
+      b,
+      t: 0,
+      k: kembali,
+      s,
+      // penjualan yang dilaporkan sales: sama dengan setoran, KECUALI satu barang (contoh selisih)
+      p: i === 6 ? 0 : s,
     });
   }
+  // barang contoh selisih, persis kasus YSL di data produksi (dibawa 1, tidak dikembalikan)
+  items[6] = { id: 7, kode: 'SKU-007', nama: 'YSL 8410', b: 1, t: 0, k: 0, s: 1, p: 0 };
   res.send(
     vPrint.suratJalan({
       sesi: contoh,
@@ -2840,11 +3121,8 @@ app.get('/cetak/rekap-ekspedisi-pdf/:id', async (req, res) => {
    * jadi gambarnya tidak perlu diambil/didekode lagi di sini (dulu `ambilGambar()` dipanggil untuk
    * menaruh logo di paling atas, revisi ke-147).
    */
-  const pdf = rekapEkspedisi({
-    sesi,
-    entri,
-    namaAdmin: namaAdminSesi(sesi),   // nama admin = petugas yang MENGINPUT, bukan yang mencetak
-  });
+  // blok tanda tangan sudah DIHAPUS dari dokumen ini (permintaan user) → tidak perlu nama petugas
+  const pdf = rekapEkspedisi({ sesi, entri });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `${req.query.unduh === '1' ? 'attachment' : 'inline'}; filename="Memo Ekspedisi Barang Lengkap ${noSurat(sesi)}.pdf"`);
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
@@ -2938,6 +3216,38 @@ async function kirimPdfF4(req, res, { alamat, nama, kembali, periksa = '.dok', s
     return balik(req, res, kembali, 'Gagal membuat PDF — silakan coba lagi');
   }
 }
+
+/*
+ * DIAGNOSA pembuat PDF — administrator saja.
+ *
+ * Dipakai saat pengguna melaporkan "PDF tidak bisa dibuka": rute ini MENJALANKAN setiap langkah
+ * (launch Chromium → buka halaman cetak → cek dokumen → cetak PDF) dengan batas waktu, lalu membalas
+ * JSON berisi langkah mana yang gagal/berat. Sebelumnya kegagalan di server tidak terlihat sama sekali
+ * dari sisi pengguna (hanya "tidak bisa dibuka"), dan di aplikasi live malah MENGGANTUNG tanpa batas.
+ *
+ * Contoh: /cetak/pdf-diagnosa?sesi=<id> (opsional; tanpa itu hanya menguji Chromium + halaman login).
+ */
+app.get('/cetak/pdf-diagnosa', async (req, res) => {
+  if (!auth.admin(req)) return res.status(403).json({ ok: false, pesan: 'Hanya administrator yang boleh melihat diagnosa PDF' });
+  const idSesi = Number(req.query.sesi || 0) || 0;
+  const sesi = idSesi ? q.sesiById(idSesi) : null;
+  const alamat = sesi ? `${originSendiri(req)}/cetak/surat-jalan/${sesi.id}` : `${originSendiri(req)}/login`;
+  const mulai = Date.now();
+  let hasil = null;
+  let galat = '';
+  try {
+    hasil = await pdfF4.diagnosa({ cookie: req.headers.cookie || '', alamat });
+  } catch (e) {
+    galat = String((e && e.message) || e).slice(0, 300);
+  }
+  res.json({
+    ok: !galat,
+    galat,
+    ms: Date.now() - mulai,
+    alamat,
+    ...(hasil || {}),
+  });
+});
 
 // Unduh PDF F4 — surat jalan & setoran (status kirim / rekap / selesai)
 app.get('/cetak/surat-jalan-pdf/:id', async (req, res) => {
@@ -3045,6 +3355,14 @@ app.use((err, req, res, next) => {
 const PORT = Number(process.env.PORT || 3000);
 // dicetak port SEBENARNYA (§ `server.address().port`) supaya skrip uji bisa memakai PORT=0 (port acak
 // dari sistem) dan membaca nomornya dari baris ini — tidak mungkin bentrok dengan proses lain.
-const server = app.listen(PORT, () => console.log('Canvasing SC Sunglasses jalan di port ' + server.address().port));
+const server = app.listen(PORT, () => {
+  console.log('Canvasing SC Sunglasses jalan di port ' + server.address().port);
+  /*
+   * Panaskan pembuat PDF di latar belakang (mencari cara menjalankan Chromium yang benar-benar bisa
+   * membuka halaman — di server ini bisa puluhan detik). Dilakukan saat server siap supaya permintaan
+   * PDF pengguna tidak menunggu pencarian itu; lihat `pdfF4.panaskan()`.
+   */
+  if (typeof pdfF4.panaskan === 'function') pdfF4.panaskan();
+});
 
 module.exports = { app, bikinKode };

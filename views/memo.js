@@ -34,7 +34,7 @@ function susunBaris({ items }) {
 }
 
 exports.render = function ({ sesi, items, base, lebar = 58, namaAdmin, setelan }) {
-  // Setelan "Edit Logo & Layout Surat" → nama toko pada kop + blok tanda tangan (lib/setelan.js).
+  // Setelan "Edit Logo & Layout Surat" → nama toko pada kop (lib/setelan.js). Blok tanda tangan sudah dihapus.
   const st = setelan || setelanSemua();
   const ukuran = LEBAR[String(lebar) === '80' ? 80 : 58];
   const baris = susunBaris({ items });
@@ -72,19 +72,14 @@ exports.render = function ({ sesi, items, base, lebar = 58, namaAdmin, setelan }
   </table>
   <div class="pisah"></div>
   <div class="total"><span>Total Barang</span><span>${angka(total)}</span></div>
-  ${st.ttd_tampil === '0'
-    ? ''
-    : `<div class="ttd">
-    <div class="kolom"><div>Admin Gudang,</div><div class="nama">${esc(namaAdmin || '')}</div></div>
-    <div class="kolom"><div>Sales,</div><div class="nama">${esc(sales)}</div></div>
-  </div>`}
   <div class="pisah"></div>
   <div class="pusat">Barang diambil sesuai daftar di atas</div>
 </div>`;
 
   const dataJson = JSON.stringify({
     toko: st.kop_sub,
-    ttd: st.ttd_tampil !== '0',
+    // tanda tangan DIHAPUS dari semua dokumen (permintaan user) — kanvas tidak menggambarnya lagi
+    ttd: false,
     tahun: String(sesi.tanggal || '').slice(0, 4),
     judul: 'MEMO PENGAMBILAN BARANG',
     id: sesi.id,

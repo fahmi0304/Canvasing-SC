@@ -397,7 +397,17 @@
    * diganti ke disabled, nilainya akan hilang dari POST/auto-save rekap).
    */
   (function pasangKunciBaris() {
-    const BARIS = '#tblInput tbody tr, #tblRekap tbody tr, #tblRetur tbody tr';
+    /*
+     * SEMUA layar penginputan barang (permintaan user: *"Baris barang saat pengimputan bisa dikunci
+     * seperti pengimputan lain dengan cara yang sama"*):
+     *   #tblInput  → barang dibawa (`/sesi/:id/ambil`) & barang tambahan (`/sesi/:id/tambahan`)
+     *   #tblRekap  → hitung barang kembali (`/sesi/:id/rekap`)
+     *   #tblRetur  → pengembalian barang ke gudang (`/sesi/:id/retur`)
+     *   #tblJual   → jumlah terjual menurut sales (`/sesi/:id/jual`)
+     * Kalau menambah layar penginputan baru dengan pola `tr` berisi `td.beku > .nm` + input angka,
+     * cukup tambahkan selektornya di sini — mekanismenya (3× ketuk nama barang) otomatis berlaku.
+     */
+    const BARIS = '#tblInput tbody tr, #tblRekap tbody tr, #tblRetur tbody tr, #tblJual tbody tr';
     const KENDALI = 'input, button, a, select, textarea, label, .qty, .ttk, [data-hapus], [data-pulih], .btn-hapus-baris';
     const AMBANG_SENTUH = 9;    // px — lebih dari ini = menggeser/menggulung, bukan mengetuk nama
     const KETUK_KUNCI = 3;      // jumlah ketukan pada NAMA BARANG untuk mengunci / membuka

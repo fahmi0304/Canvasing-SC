@@ -92,4 +92,27 @@ const RETUR = `<svg class="ikon-retur" viewBox="0 0 24 24" fill="none" stroke="c
 const PENSIL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 <path d="M4 20h4.2L20 8.2a2.3 2.3 0 0 0-3.2-3.2L5 16.8z"/><path d="M14.6 6.4l3 3"/></svg>`;
 
-module.exports = { GARIS, PRINTER, KALENDER, FILTER, ORANG, LAPORAN, PLUS, PENSIL, RETUR, DASBOR, SETTING, LAPOR, INVENTORY, REKAP, SELESAI, KUNCI, MEMO, AUDIT, HAPUS };
+/**
+ * Ikon PENJUALAN (label harga) untuk halaman penginputan jumlah barang terjual (P) —
+ * permintaan user: "surat jalan ongoing, sales harus memasukkan dulu jumlah barang yang di jual mereka".
+ * Bentuknya label harga (tag) dengan lubang di ujungnya, seukuran ikon aksi lain (viewBox 24, stroke 2).
+ */
+const JUAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M11.6 3.2H4.4A1.2 1.2 0 0 0 3.2 4.4v7.2c0 .3.1.6.35.85l8.4 8.4c.47.47 1.23.47 1.7 0l6.5-6.5c.47-.47.47-1.23 0-1.7l-8.4-8.4a1.2 1.2 0 0 0-.85-.35z"/>
+<path d="M7.4 7.4h.01"/></svg>`;
+
+/**
+ * Ikon VALID — **lingkaran hijau + centang putih** (permintaan user: *"Ubah tulisan valid di laporan
+ * penjualan pdf ke ikon valid, ikonnya seperti gambar"*, gambar kiriman user = centang putih di dalam
+ * bulatan hijau). Dipakai di **kolom P** (bukan lagi kolom S) pada **dokumen PDF** (surat jalan &
+ * laporan lengkap) dan **Overview** di layar, setiap kali laporan penjualan sales (P) SAMA dengan
+ * setoran hasil rekap (S).
+ *
+ * Bentuknya SVG **terisi** (`fill`), berbeda dari ikon lain di berkas ini yang bergaris (`stroke`) —
+ * itu sengaja, supaya dua rona (hijau + putih) persis seperti gambar kiriman user dan tetap tajam di
+ * ukuran kecil pada cetakan.
+ */
+const VALID = `<svg class="ikon-valid" viewBox="0 0 24 24" role="img" aria-label="Valid"><circle cx="12" cy="12" r="12" fill="#15803d"/>` +
+  `<path d="M6.3 12.5l3.7 3.7 7.7-7.9" fill="none" stroke="#fff" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+module.exports = { GARIS, PRINTER, KALENDER, FILTER, ORANG, LAPORAN, PLUS, PENSIL, JUAL, RETUR, DASBOR, SETTING, LAPOR, INVENTORY, REKAP, SELESAI, KUNCI, MEMO, AUDIT, HAPUS, VALID };

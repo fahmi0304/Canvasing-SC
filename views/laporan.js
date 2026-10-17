@@ -6,6 +6,11 @@ const { menuBaris, attrBarisKlik, opsiUndo } = require('./menu-baris');
 const { FILTER, KALENDER, ORANG, LAPORAN } = require('./ikon');
 const { noSurat } = require('../lib/kode');
 const { kartuGrafik } = require('./grafik');
+/*
+ * `?v=` pada tautan PDF F4 = waktu ubah templat dokumen (lib/versiDokumen.js) supaya penampil PDF di
+ * ponsel tidak menyajikan berkas LAMA untuk alamat yang sama.
+ */
+const { VERSI_DOKUMEN } = require('../lib/versiDokumen');
 
 /**
  * Tombol FILTER TANGGAL (ikon kalender). Dipakai di halaman laporan per sales
@@ -134,7 +139,7 @@ exports.hub = function ({ base, pesan, daftar, jumlahBarang, jumlahSales, daftar
           ? []
           : [
               {
-                href: `${base}${selesai ? `/cetak/laporan-pdf/${s.id}` : `/cetak/surat-jalan-pdf/${s.id}`}`,
+                href: `${base}${selesai ? `/cetak/laporan-pdf/${s.id}` : `/cetak/surat-jalan-pdf/${s.id}`}?v=${VERSI_DOKUMEN}`,
                 target: true,
                 attr: 'data-pdf-buka',
                 ikon: '🖨',
@@ -170,7 +175,7 @@ exports.hub = function ({ base, pesan, daftar, jumlahBarang, jumlahSales, daftar
       }
       return `<tr data-status="${esc(s.status)}" data-sales="${esc(String(s.sales_nama || '-'))}"${attrBarisKlik(s, base)}>
         <td class="td-tanggal"><div class="tgl">${esc(tanggalPendek(s.tanggal))}</div></td>
-        <td class="td-sales">${tombolSaringSales(s.sales_nama)}<span class="status-isi">${badge(s.status)}</span></td>
+        <td class="td-sales">${tombolSaringSales(s.sales_nama)}<span class="status-isi">${badge(s)}</span></td>
         <td class="aksi-sel">${menuBaris({ judul: `${noSurat(s)} · ${s.sales_nama || '-'}`, opsi: opsiBaris })}</td>
       </tr>`;
     })

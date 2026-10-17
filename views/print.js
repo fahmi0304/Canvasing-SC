@@ -1,8 +1,9 @@
 'use strict';
-const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, pisahCatatan, namaAdminSesi, urutNama, kelompokCatatan } = require('../lib/util');
+const { esc, angka, tanggalPanjang, tanggalPendek, setoranEfektif, arahBedaSP, catatanSelisihSPRinci, pisahCatatan, namaAdminSesi, urutNama, kelompokCatatan, hariIni, jamSekarang } = require('../lib/util');
 const barcode = require('../lib/barcode');
 const { noSurat } = require('../lib/kode');
 const { semua: setelanSemua, logoDokumen, UKURAN: UKURAN_LOGO } = require('../lib/setelan');
+const { VALID: IKON_VALID } = require('./ikon');
 
 /**
  * Pengali tinggi logo di kop menurut pilihan "Ukuran logo" (Setting → Edit Logo & Layout Surat).
@@ -236,8 +237,31 @@ function adaSelisih(i) {
   return b + t - k !== Number(setoranEfektif(i)) || k > b + t;
 }
 
-/** Baris tabel dokumen F4: NO | NAMA BARANG | B | T | K | S */
-function barisBTKS(daftar, mulai) {
+/**
+ * Baris tabel dokumen F4: **NAMA BARANG | B | T | K | S | P**
+ *
+ * Permintaan user (tiga tahap, jangan dibalik):
+ *  1. *"kolom no di laporan penjualan diganti ke p"* → kolom NO diganti kolom P;
+ *  2. *"Pindah posisi kolom p di laporan ke samping s"* (pilihan pemilik aplikasi: **tanpa kolom
+ *     pertama — tabel langsung mulai dari Nama Barang**) → kolom P dipindah ke sebelah kolom S;
+ *  3. *"buat susunan di laporan, b,t,k,s,p"* → **urutan akhir kolom = B · T · K · S · P**.
+ *
+ * **Pasangan pembanding S–P** (permintaan user: *"buat kolom s dan p sedikit terpisah atau buat bagaimana
+ * agar tampak bahwa kolom itu yang di bandingkan"*): sel S dan P (kepala & isi) memakai kelas tambahan
+ * **`sp`** — di `print.css` keduanya diberi latar tipis yang sama + celah putih tipis di antaranya
+ * sehingga terbaca sebagai SATU pasangan yang dibandingkan, sedangkan B/T/K tetap polos.
+ *
+ * **Penanda MERAH (permintaan user): *"semua tulisan rata tengah jika kolom s tidak sama dengan p maka
+ * kolomnya merah"*** → sel **S dan P** diberi kelas `beda` (tulisan merah + latar merah tipis) kalau
+ * angka Setoran (S) berbeda dengan laporan penjualan sales (P).
+ *
+ * Penandaan itu hanya dilakukan saat perbandingannya BERARTI (`bandingP` = status perjalanan sudah
+ * `rekap`/`selesai`). Sebelum rekap, angka S masih sama dengan seluruh barang yang dibawa (K belum
+ * dihitung) sehingga membandingkannya dengan laporan sales akan membuat SEMUA baris merah — surat jalan
+ * biasa jadi tidak enak dibaca. Karena itu `bandingP` dikirim pemanggil.
+ */
+function barisBTKS(daftar, mulai, opsi = {}) {
+  const bandingP = !!opsi.bandingP;
   return daftar
     .map((i, n) => {
       /*
@@ -251,41 +275,69 @@ function barisBTKS(daftar, mulai) {
        * dan dijaga butir "detail perjalanan: kolom S selalu TERTULIS angkanya" di uji-canvasing.js.
        */
       const s = setoranEfektif(i);
+      const p = Number(i.p) || 0;
       const merah = adaSelisih(i);
+      /*
+       * ARAH selisih S vs P: `kurang` (setoran lebih sedikit dari penjualan) → **MERAH**, `lebih`
+       * (setoran lebih banyak dari penjualan) → **HIJAU** — permintaan user: *"Jika barang setoran lebih,
+       * maka tulisan nya Hijau"*. Kelas penandanya `beda` + arah; `beda` tetap dipakai supaya
+       * pemeriksaan lama (dan CSS merah) tidak perlu diubah namanya.
+       */
+      const arah = bandingP ? arahBedaSP(i, s) : '';
+      /*
+       * VALID (permintaan user: *"jika p nilainya sama dengan s, maka gunakan simbol valid berwarna
+       * hijau … di halaman overview dan pdf"*): kalau laporan penjualan sales SAMA dengan setoran hasil
+       * rekap, kolom S tidak menulis angkanya melainkan kata **"Valid"** berwarna hijau.
+       *
+       * Urutan sel = B · T · K · **S · P** (permintaan user: "buat susunan di laporan, b,t,k,s,p").
+       * Nilai **0 dikosongkan** di semua kolom angka (permintaan user: "kolom yang nilainya 0 biarkan
+       * kosong") — barisnya tetap bergaris.
+       */
+      /*
+       * VALID (permintaan user: *"Ubah tulisan valid di laporan penjualan pdf ke ikon valid … pindah
+       * ikonnya dari kolom s ke kolom p"*): kalau laporan penjualan sales (P) SAMA dengan setoran hasil
+       * rekap (S), maka **kolom P** menampilkan **IKON VALID** (lingkaran hijau + centang putih) dan
+       * kolom S tetap menampilkan **angka setorannya** seperti biasa.
+       */
+      /*
+       * Permintaan user TERBARU: ikon VALID hanya untuk baris yang penjualannya BENAR-BENAR ada
+       * (P > 0). Baris dengan P = 0 (biasanya setorannya juga 0) selnya dibiarkan KOSONG — dulu
+       * laporan seperti ZA008 yang hampir seluruh barisnya P = 0 & S = 0 jadi penuh ikon centang
+       * padahal tidak ada penjualan yang dilaporkan.
+       */
+      const valid = bandingP && p > 0 && p === s;
       return `<tr class="${merah ? 'baris-selisih' : ''}"${merah ? ' data-selisih="1"' : ''}>
-        <td class="no">${mulai + n}</td>
         <td class="nm">${esc(i.nama)}</td>
-        <td class="b">${i.b || ''}</td>
-        <td class="t">${i.t || ''}</td>
-        <td class="k">${i.k || ''}</td>
-        <td class="s">${s === 0 ? '' : angka(s)}</td>
+        <td class="b">${Number(i.b) || ''}</td>
+        <td class="t">${Number(i.t) || ''}</td>
+        <td class="k">${Number(i.k) || ''}</td>
+        <td class="s sp${arah && !valid ? ' beda ' + arah : ''}"${arah && !valid ? ` data-beda="1" data-arah="${arah}"` : ''}>${s === 0 ? '' : angka(s)}</td>
+        <td class="p sp${valid ? ' valid-ikon' : arah ? ' beda ' + arah : ''}"${valid ? ' data-valid="1"' : arah ? ` data-beda="1" data-arah="${arah}"` : ''}>${valid ? IKON_VALID : p === 0 ? '' : angka(p)}</td>
       </tr>`;
     })
     .join('');
 }
 
-/** Kepala tabel barang (dipakai kolom kiri & kolom kanan surat jalan). */
-const KEPALA_BTKS = '<thead><tr><th class="no">NO</th><th>NAMA BARANG</th><th class="b">B</th><th class="t">T</th><th class="k">K</th><th class="s">S</th></tr></thead>';
+/**
+ * Kepala tabel barang (dipakai kolom kiri & kolom kanan surat jalan):
+ * **NAMA BARANG | B | T | K | S | P** — tanpa kolom nomor urut, dan **S diikuti P** sebagai pasangan
+ * pembanding (kelas `sp`). Kepala tabel sudah rata tengah lewat `print.css`
+ * (`table.grid thead th`), sedangkan kolom NAMA BARANG di isinya tetap rata kiri.
+ */
+const KEPALA_BTKS = '<thead><tr><th>NAMA BARANG</th><th class="b">B</th><th class="t">T</th><th class="k">K</th><th class="s sp">S</th><th class="p sp">P</th></tr></thead>';
 
-/** Blok tanda tangan: jabatan + nama yang sudah tertulis (nama petugas yang merekap & nama sales). */
-function kolomTtd(jabatan, nama) {
-  return `<div class="kolom">
-    <div class="jabatan">${jabatan}</div>
-    <div class="ruang"></div>
-    <div class="garis"></div>
-    <div class="nama">${nama ? esc(nama) : '&nbsp;'}</div>
-  </div>`;
-}
+/*
+ * BLOK TANDA TANGAN DIHAPUS DARI SEMUA DOKUMEN — permintaan user: *"hapus kolom tanda tangan di cetak
+ * laporan"*, dengan jawaban pilihan pemilik aplikasi: **semua dokumen** (surat jalan, laporan lengkap,
+ * laporan per sales + lembar rekap semua sales, memo PDF, dan struk thermal) dan **setelan tanda tangan
+ * tidak berpengaruh lagi**. Karena itu `blokTandaTangan()`, `kolomTtd()`, `TTD_ADMIN`, dan `TTD_SALES`
+ * sudah TIDAK ADA di berkas ini — jangan dihidupkan kembali tanpa permintaan baru.
+ * (Gaya `.ttd` di `print.css` juga sudah dibuang.)
+ */
 
-function blokTandaTangan(kiri, kanan) {
-  return `<div class="ttd">${kolomTtd(kiri.jabatan, kiri.nama)}${kolomTtd(kanan.jabatan, kanan.nama)}</div>`;
-}
-
-const TTD_ADMIN = 'Mengetahui<br>Admin Gudang,';
-const TTD_SALES = 'Sales,';
 
 /** SURAT JALAN DAN SETORAN — F4, daftar barang 2 kolom: kiri diisi penuh dulu, kanan lanjutannya
- *  (+ akumulasi B/T/K/S, catatan, dan tanda tangan selalu di sisi kanan). */
+ *  (+ akumulasi B/T/K/S dan catatan selalu di sisi kanan). */
 /** Barang yang benar-benar ada gerak (dibawa / tambahan / kembali) — yang lain tidak dicetak. */
 function adaGerak(i) {
   return (Number(i.b) || 0) + (Number(i.t) || 0) + (Number(i.k) || 0) > 0;
@@ -293,6 +345,48 @@ function adaGerak(i) {
 
 const BARIS_KOSONG = (kolom) =>
   `<tr class="kosong-doc"><td colspan="${kolom}">Belum ada barang yang dibawa / tambahan / kembali.</td></tr>`;
+
+/**
+ * Batas jumlah baris catatan selisih yang dicetak di DOKUMEN (surat jalan & laporan lengkap) supaya
+ * dokumennya tetap 1 halaman — aturan "laporan surat jalan jangan sampai 2 halaman" (permintaan user)
+ * tetap terjaga. Sisanya diringkas menjadi satu baris; daftar LENGKAP tetap tampil di kartu Catatan
+ * pada halaman perjalanan & Overview (layar tidak dibatasi halaman).
+ */
+const MAKS_CATATAN_SELISIH = 12;
+
+/**
+ * Apakah **WARNA sel S & P** (penanda S ≠ P) menyala di dokumen ini?
+ *
+ * Permintaan user: *"Jika s tidak sama dengan p maka kolomnya merah"* + *"Jika barang setoran lebih, maka
+ * tulisan nya Hijau"* + *"semua tempat (dokumen F4, halaman rekap, halaman perjalanan & Overview)"*.
+ *
+ * Satu syarat saja: **total P > 0** — artinya sales memang sudah melaporkan penjualannya. Sejak itu,
+ * SELISIHNYA LANGSUNG TERLIHAT di mana-mana, termasuk saat surat jalan baru berstatus **Ongoing** atau
+ * **Menunggu Rekap** (sales mengisi P pada tahap itu, jadi user memang mengharapkan penandanya muncul
+ * saat itu juga — bukan menunggu rekap selesai).
+ *
+ * Surat jalan LAMA (dibuat sebelum fitur penjualan ada) punya P = 0 di SEMUA barang, jadi tanpa syarat
+ * `P > 0` seluruh kolom S-nya akan bertanda "selisih" tanpa guna (terukur pada data produksi: 12–51 baris
+ * per surat jalan).
+ */
+function bolehBandingP(sesi, totalP) {
+  if (!sesi || sesi.status === 'draft') return false;
+  return Number(totalP) > 0;
+}
+
+/**
+ * Apakah dokumen sudah boleh memakai **Selisih = P − S** dan menuliskan **catatan temuan selisih**?
+ *
+ * Berbeda dari warna di atas: dua hal ini baru BERARTI setelah rekap (`rekap`/`selesai`), karena sebelum
+ * rekap kolom Setoran (S) masih sama dengan seluruh barang yang dibawa (K belum dihitung) — kalau
+ * dipaksa, kotak Selisih akan mencetak angka negatif besar dan daftar catatan berisi "belum
+ * dikembalikan" untuk hampir semua barang. Sesudah rekap, S adalah setoran yang sebenarnya sehingga
+ * `P − S` dan daftar temuannya tepat.
+ */
+function bolehSelisihRekap(sesi, totalP) {
+  if (!sesi || (sesi.status !== 'rekap' && sesi.status !== 'selesai')) return false;
+  return Number(totalP) > 0;
+}
 
 /*
  * permintaan user: daftar barang memenuhi KOLOM KIRI dulu sampai bawah halaman, baru sisanya
@@ -317,11 +411,36 @@ exports.suratJalan = function ({ sesi, items, base, judul, info, namaAdmin, sete
    * kolom — fungsi bagiKolomSuratJalan memindahkan baris mengikuti urutan DOM-nya.
    */
   const semua = urutNama(items.filter(adaGerak));
-  const tot = { b: 0, t: 0, k: 0, s: 0 };
+  const tot = { b: 0, t: 0, k: 0, s: 0, p: 0 };
   semua.forEach((i) => {
-    tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i);
+    tot.b += i.b; tot.t += i.t; tot.k += i.k; tot.s += setoranEfektif(i); tot.p += Number(i.p) || 0;
   });
-  const selisih = tot.b + tot.t - tot.k - tot.s;
+  /*
+   * SELISIH pada DOKUMEN = **jumlah barang penjualan dikurangi setoran (P − S)** — permintaan user:
+   * *"selisih itu jumlah barang penjualan di kurangi setoran"*, dengan pilihan pemilik aplikasi
+   * "hanya dokumen" (halaman rekap & Overview tetap memakai S − P seperti sebelumnya).
+   * Selisih ini juga yang menentukan penanda merah sel S & P dan catatan otomatis "Jumlah setoran
+   * lebih/kurang N (NAMA BARANG)".
+   */
+  const bandingP = bolehBandingP(sesi, tot.p);
+  // kotak Selisih (P − S) & daftar catatan temuan: menunggu rekap, lihat bolehSelisihRekap()
+  const selisihRekap = bolehSelisihRekap(sesi, tot.p);
+  /*
+   * Kotak Selisih dokumen:
+   *  - saat sudah direkap (`selisihRekap`) → **P − S** ("selisih itu jumlah barang penjualan di kurangi
+   *    setoran", permintaan user);
+   *  - sebelum itu → tetap rumus lama **B + T − K − S** yang nilainya 0 pada surat jalan normal.
+   *    Tanpa penjagaan ini, surat jalan yang baru terbit (sales belum melaporkan penjualannya, jadi P = 0)
+   *    akan mencetak selisih besar bernilai negatif — padahal kolom P-nya memang masih kosong.
+   */
+  const selisih = selisihRekap ? tot.p - tot.s : tot.b + tot.t - tot.k - tot.s;
+  /*
+   * Catatan selisih untuk KERTAS dibatasi jumlah barisnya (lihat MAKS_CATATAN_SELISIH) supaya dokumen
+   * tetap 1 halaman. Kalau lebih banyak, sisanya diringkas menjadi satu baris terakhir.
+   */
+  const catatanSelisihSemua = catatanSelisihSPRinci(semua, selisihRekap);
+  const catatanSelisih = catatanSelisihSemua.slice(0, MAKS_CATATAN_SELISIH);
+  const sisaCatatanSelisih = catatanSelisihSemua.length - catatanSelisih.length;
 
   /*
    * permintaan user: "catatan tidak usah kolom, setelah tulisan catatan … di bawah catatan pesan
@@ -377,15 +496,24 @@ exports.suratJalan = function ({ sesi, items, base, judul, info, namaAdmin, sete
   </div>
   <div class="sj-dua">
     <div class="sj-kiri">
-      <table class="grid" id="tblKiri">${KEPALA_BTKS}<tbody>${semua.length ? barisBTKS(semua, 1) : BARIS_KOSONG(6)}</tbody></table>
+      <table class="grid" id="tblKiri">${KEPALA_BTKS}<tbody>${semua.length ? barisBTKS(semua, 1, { bandingP }) : BARIS_KOSONG(6)}</tbody></table>
     </div>
     <div class="sj-kanan">
       <table class="grid sj-lanjutan sembunyi" id="tblKanan">${KEPALA_BTKS}<tbody></tbody></table>
       <table class="rekap">
-        <tr><td class="k">B</td><td>Jumlah Produk dibawa</td><td class="v">${angka(tot.b)}</td><td class="sel${selisih !== 0 ? ' selisih-ada' : ''}" rowspan="4"${selisih !== 0 ? ' data-selisih="1"' : ''}>Selisih<div>${angka(selisih)}</div></td></tr>
+        <tr><td class="k">B</td><td>Jumlah Produk dibawa</td><td class="v">${angka(tot.b)}</td><td class="sel${selisih !== 0 ? ' selisih-ada' : ''}" rowspan="5"${selisih !== 0 ? ' data-selisih="1"' : ''}>Selisih<div>${angka(selisih)}</div></td></tr>
         <tr><td class="k">T</td><td>Jumlah Tambahan</td><td class="v">${angka(tot.t)}</td></tr>
         <tr><td class="k">K</td><td>Jumlah Kembali</td><td class="v">${angka(tot.k)}</td></tr>
-        <tr><td class="k">S</td><td>Jumlah Setoran</td><td class="v">${angka(tot.s)}</td></tr>
+        <!--
+          Baris **P** pada kotak jumlah & keterangan — permintaan user: *"di kolom jumlah dan keterangan,
+          tambah jumlah kolom p dengan keterangan penjualan"*. Keterangannya memakai kata "Penjualan",
+          dan urutannya mengikuti susunan dokumen (B · T · K · **S · P**).
+          Nilai **Selisih** di sebelah kanannya = **P − S** (permintaan user: "selisih itu jumlah barang
+          penjualan di kurangi setoran") sehingga selisih POSITIF berarti penjualan lebih banyak daripada
+          setoran, dan negatif berarti setoran lebih banyak daripada yang dilaporkan sales.
+        -->
+        <tr class="sp"><td class="k">S</td><td>Jumlah Setoran</td><td class="v">${angka(tot.s)}</td></tr>
+        <tr class="sp"><td class="k">P</td><td>Jumlah Penjualan</td><td class="v">${angka(tot.p)}</td></tr>
       </table>
       <div class="kotak-catatan tanpa-kotak"><b>Catatan:</b> <span class="catatan-manual">${esc(catatanDok.manual || '')}</span>${
         catatanDok.otomatis.length
@@ -400,8 +528,34 @@ exports.suratJalan = function ({ sesi, items, base, judul, info, namaAdmin, sete
               .join('')}</div>`
           : ''
       }</div>
+      ${
+        /*
+         * BLOK BARU **"Catatan Selisih"** (permintaan user: *"jika ada catatan selisih, buat catatan
+         * baru, dengan tulisan catatan selisih dan berikan nomor catatan"*) — dipisah dari blok Catatan
+         * biasa, punya judulnya sendiri, dan **nomornya mulai dari 1 lagi**. Warna isinya mengikuti arah
+         * selisihnya (setoran kurang = merah, setoran lebih = hijau).
+         */
+        catatanSelisih.length
+          ? `<div class="kotak-catatan tanpa-kotak blok-catatan-selisih"><b>Catatan Selisih:</b>${
+              `<div class="catatan-otomatis-dok">${catatanSelisih
+                .map((x, n) => `<div class="baris-otomatis baris-selisih-sp ${x.arah}"><span class="no">${n + 1}.</span> <span class="isi-otomatis">${esc(x.teks)}</span></div>`)
+                .join('')}${
+                sisaCatatanSelisih
+                  ? `<div class="baris-otomatis baris-selisih-sp sisa"><span class="no">${catatanSelisih.length + 1}.</span> <span class="isi-otomatis">dan ${angka(sisaCatatanSelisih)} barang lain juga selisih — lihat layar rekap</span></div>`
+                  : ''
+              }</div>`
+            }</div>`
+          : ''
+      }
       ${info || ''}
-      ${s.ttd_tampil === '0' ? '' : blokTandaTangan({ jabatan: TTD_ADMIN, nama: namaAdmin }, { jabatan: TTD_SALES, nama: sesi.sales_nama })}
+      <!--
+        Penanda berkas BARU: "Dicetak: dd/mm/yyyy hh:mm" (rata kanan, huruf kecil) — dipakai pengguna
+        untuk memastikan dokumen yang dibuka memang baru dibuat, bukan berkas LAMA dari penampil PDF
+        ponselnya (permintaan yang berulang: "tidak ada yang berubah" padahal kodenya sudah diperbarui).
+        Pola yang sama sudah dipakai laporan Rekap Ekspedisi. Ditaruh di kolom KANAN (bukan footer
+        dasar halaman) supaya pembagian baris ke kolom & pemilihan ukuran huruf tetap menghitungnya.
+      -->
+      <div class="cetak-kapan">Dicetak: ${esc(hariIni().split('-').reverse().join('/'))} ${esc(jamSekarang())}</div>
     </div>
   </div>
 </div>`;
@@ -416,7 +570,16 @@ exports.suratJalan = function ({ sesi, items, base, judul, info, namaAdmin, sete
 
 /** LAPORAN LENGKAP setelah rekap selesai dikunci */
 exports.laporan = function ({ sesi, items, base, namaAdmin }) {
-  const info = `<div class="info-selesai">REKAP SELESAI &amp; DIKUNCI · ${esc(tanggalPanjang(sesi.tanggal))} · Sales: ${esc(sesi.sales_nama || '-')}${sesi.rekap_oleh ? ` · Direkap oleh: ${esc(sesi.rekap_oleh)}` : ''}</div>`;
+  /*
+   * Keterangan "REKAP SELESAI & DIKUNCI" pada dokumen laporan — permintaan user: di situ dicantumkan
+   * **penjualan diinput oleh siapa** (`sesi.jual_oleh`, disimpan rute `/sesi/:id/jual`; untuk transaksi
+   * lama diisi dari jejak audit saat migrasi). Kalau namanya belum tercatat (data sangat lama), bagian
+   * itu tidak ditulis supaya tidak menampilkan "-" yang membingungkan.
+   */
+  const info =
+    `<div class="info-selesai">REKAP SELESAI &amp; DIKUNCI · ${esc(tanggalPanjang(sesi.tanggal))} · Sales: ${esc(sesi.sales_nama || '-')}` +
+    `${sesi.jual_oleh ? ` · Penjualan diinput oleh: ${esc(sesi.jual_oleh)}` : ''}` +
+    `${sesi.rekap_oleh ? ` · Direkap oleh: ${esc(sesi.rekap_oleh)}` : ''}</div>`;
   /*
    * nama admin pada tanda tangan = petugas yang MENGINPUT data perjalanan ini (`namaAdminSesi()`:
    * `rekap_oleh` lalu `dibuat_oleh`) — permintaan user: "Nama yang ada di tanda tangan admin itu admin
@@ -566,7 +729,7 @@ exports.laporanSales = function ({ base, dari, sampai, rekap, total, hariIni, na
       <tr><td class="k">K</td><td>Jumlah Kembali</td><td class="v">${angka(s.k)}</td></tr>
     </table>
   </div>
-  ${p === jmlLembar - 1 && st.ttd_tampil !== '0' ? blokTandaTangan({ jabatan: TTD_ADMIN, nama: namaAdmin }, { jabatan: TTD_SALES, nama: s.sales }) : ''}
+  
 </div>`);
       }
     });
@@ -608,7 +771,7 @@ exports.laporanSales = function ({ base, dari, sampai, rekap, total, hariIni, na
     </tbody>
   </table>
   <div class="memo-foot"><div class="total-barang"><b>Total Barang Terjual</b><span>${angka(total.s)}</span></div></div>
-  ${blokTandaTangan({ jabatan: TTD_ADMIN, nama: namaAdmin }, { jabatan: 'Pimpinan,', nama: '' })}
+  
 </div>`);
 
   return kerangka({ base, judul: 'Laporan Penjualan per Sales', isi: lembar.join('') });

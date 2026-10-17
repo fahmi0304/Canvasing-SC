@@ -92,10 +92,12 @@ exports.render = function ({ base, setelan, pesan, galat, bolehUbah }) {
             <label class="f">Garis kop</label>
             <label class="logo-opsi"><input type="checkbox" name="kop_garis" value="1"${setelan.kop_garis === '1' ? ' checked' : ''}><span>Tampilkan garis pemisah di bawah kop surat</span></label>
           </div>
-          <div>
-            <label class="f">Tanda tangan</label>
-            <label class="logo-opsi"><input type="checkbox" name="ttd_tampil" value="1"${setelan.ttd_tampil === '1' ? ' checked' : ''}><span>Tampilkan blok tanda tangan (Admin Gudang &amp; Sales) di surat jalan, laporan, dan memo</span></label>
-          </div>
+          <!--
+            Kotak "Tanda tangan" DIHAPUS: blok tanda tangan tidak lagi dicetak di dokumen mana pun
+            (permintaan user: *"hapus kolom tanda tangan di cetak laporan"*, pilihan pemilik aplikasi:
+            semua dokumen & setelan tanda tangan tidak berpengaruh lagi). Kunci ttd_tampil sengaja
+            dibiarkan ada di database (tidak dibaca lagi) supaya tidak perlu migrasi.
+          -->
           <div class="aksi-row aksi-dua">
             <button class="btn btn-primary" type="submit">Simpan Pengaturan</button>
             <a class="btn" href="${base}/cetak/contoh" target="_blank" rel="noopener">Buka Contoh Surat</a>

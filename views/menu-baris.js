@@ -1,5 +1,5 @@
 'use strict';
-const { esc } = require('../lib/util');
+const { esc, perluDataPenjualan } = require('../lib/util');
 const { noSurat } = require('../lib/kode');
 const { GARIS } = require('./ikon');
 
@@ -97,13 +97,28 @@ exports.attrBarisKlik = function (s, base = '') {
  * tidak menjadi kosong karena di dasbor masih ada "Buka"/PDF/Hapus dan di Laporan masih ada
  * "Buka"/PDF.
  */
+/*
+ * Label opsi Undo per status. Untuk `rekap` tujuannya BERGANTUNG penjualannya (kalau kolom P masih kosong,
+ * server membukanya ke `tunggu_jual`, bukan `jual`) — jadi labelnya dipilih dari `s.tot_p` yang dikirim
+ * daftar perjalanan supaya tidak menyesatkan.
+ */
 const UNDO_TUJUAN = {
   selesai: { label: 'Undo: buka ke Sedang Rekap', ket: 'batalkan langkah Selesai supaya K & S bisa diperbaiki' },
-  rekap: { label: 'Undo: buka ke Ongoing', ket: 'batalkan rekap supaya barang tambahan bisa diisi lagi' },
+  rekap: { label: 'Undo: buka ke Menunggu Rekap', ket: 'batalkan rekap supaya penjualan & barang tambahan bisa diisi lagi' },
+  rekapTanpaP: { label: 'Undo: buka ke Ongoing', ket: 'batalkan rekap (penjualan belum diisi) supaya penjualan & barang tambahan bisa diisi lagi' },
+  jual: { label: 'Undo: buka ke Ongoing', ket: 'hapus tahap Menunggu Rekap supaya surat jalan kembali berstatus Ongoing' },
+  tunggu_jual: { label: 'Undo: buka ke Draft', ket: 'buka kunci surat jalan supaya barang bawaan bisa diubah' },
+  /*
+   * "Menunggu Data Penjualan" = status `tunggu_jual` yang rekapnya SUDAH dikunci tanpa penjualan. Langkah
+   * terakhirnya adalah mengunci rekap, jadi undo-nya membuka kembali tahap Sedang Rekap (lihat server.js).
+   */
+  menungguPenjualan: { label: 'Undo: buka ke Sedang Rekap', ket: 'batalkan penguncian rekap (penjualan belum diisi) supaya penjualan & rekap bisa dijalankan lagi' },
   kirim: { label: 'Undo: buka ke Draft', ket: 'buka kunci surat jalan supaya barang bawaan bisa diubah' },
 };
 exports.opsiUndo = function (s, base, balikKe = '') {
-  const tujuan = UNDO_TUJUAN[s.status];
+  // rekap tanpa penjualan dibuka ke Ongoing (lihat UNDO_TUJUAN.rekapTanpaP)
+  const kunci = perluDataPenjualan(s) ? 'menungguPenjualan' : s.status === 'rekap' && !(Number(s.tot_p) > 0) ? 'rekapTanpaP' : s.status;
+  const tujuan = UNDO_TUJUAN[kunci];
   if (!tujuan) return null;
   const kembali = balikKe ? `<input type="hidden" name="balik" value="${esc(balikKe)}">` : '';
   return {

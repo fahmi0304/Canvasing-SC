@@ -110,6 +110,7 @@ html[data-tema="gelap"] .badge.b-ungu { color: #ddd6fe; }
 html[data-tema="gelap"] .badge.b-hijau { color: #6ee7b7; }
 html[data-tema="gelap"] .badge.b-abu { color: #d6d3f0; }
 html[data-tema="gelap"] .badge.b-merah { color: #fca5a5; }
+html[data-tema="gelap"] .badge.b-tosca { color: #5eead4; }
 html[data-tema="gelap"] .alert-info { color: #d9d5ff; }
 html[data-tema="gelap"] .alert-warn { color: #fcd34d; }
 html[data-tema="gelap"] .alert-ok { color: #6ee7b7; }
@@ -622,6 +623,8 @@ table.tbl td.tengah, table.tbl th.tengah { text-align: center; }
 .b-hijau { background: rgba(16, 185, 129, 0.16); color: #047857; }
 .b-abu { background: rgba(99, 95, 130, 0.14); color: var(--muted); }
 .b-merah { background: rgba(220, 38, 38, 0.14); color: #b91c1c; }
+/* Badge status baru "Menunggu Rekap" (permintaan user) — warna tosca, dari keluarga warna logo. */
+.b-tosca { background: rgba(13, 148, 136, 0.16); color: #0f766e; }
 
 /* ---------- qty stepper ---------- */
 .qty { display: inline-flex; align-items: center; gap: 4px; }
@@ -674,6 +677,9 @@ tr.terkunci .kolom-s input { pointer-events: none; color: var(--muted); opacity:
    `manipulation` supaya tabel tetap bisa digeser mendatar walau mulai dari kolom nama. */
 #tblInput tbody td.beku { touch-action: pan-y; }
 #tblRekap tbody td.beku { touch-action: manipulation; }
+/* layar penjualan (kolom P) & retur: baris bisa dikunci dengan cara yang sama (3× ketuk nama barang) */
+#tblJual tbody td.beku { touch-action: manipulation; }
+#tblRetur tbody td.beku { touch-action: manipulation; }
 
 /* ---------- scan panel ---------- */
 .scan-card { position: sticky; top: 84px; }
@@ -780,7 +786,57 @@ input.setoran-negatif {
  */
 table.tbl th.kolom-bt, table.tbl td.kolom-bt { width: 62px; }
 table.tbl th.kolom-k, table.tbl td.kolom-k { width: 158px; }
+table.tbl th.kolom-p, table.tbl td.kolom-p { width: 62px; }
 table.tbl th.kolom-s, table.tbl td.kolom-s { width: 76px; }
+/*
+ * PASANGAN PEMBANDING S–P di tabel rekap (permintaan user: *"buat kolom s dan p sedikit terpisah atau buat
+ * bagaimana agar tampak bahwa kolom itu yang di bandingkan"*): kolom Setoran (S) & P — kepala dan
+ * isi — diberi latar tipis yang SAMA + celah pemisah di antaranya, sehingga terbaca sebagai satu pasangan
+ * yang dibandingkan sementara kolom lain polos. Latarnya di <td>/<th> supaya tidak bentrok dengan warna
+ * baris berselang-seling, dan aturan warna `.beda-sp` ditulis SESUDAHNYA supaya warnanya tetap menang.
+ */
+table.tbl th.pasangan-sp, table.tbl td.pasangan-sp { background-color: rgba(var(--aksen-rgb), 0.07); }
+table.tbl th.kolom-p.pasangan-sp, table.tbl td.kolom-p.pasangan-sp { border-left: 3px solid var(--solid); }
+
+/*
+ * PENANDA SELISIH "Setoran (S) tidak sama dengan laporan penjualan sales (P)" — permintaan user:
+ * *"jika kolom s tidak sama dengan p maka kolomnya merah"*, lalu *"Jika barang setoran lebih, maka
+ * tulisan nya Hijau"*. Karena ada DUA arah, kelasnya dipecah:
+ *   - `.beda-sp.kurang` → setoran LEBIH SEDIKIT dari penjualan → **MERAH** (temuan: barang terjual lebih
+ *     banyak daripada yang disetor);
+ *   - `.beda-sp.lebih`  → setoran LEBIH BANYAK dari penjualan → **HIJAU** (temuan: ada barang yang tidak
+ *     dilaporkan terjual, mis. YSL dibawa 1 dan tidak dikembalikan).
+ * Dipakai halaman rekap (sel S & P, hidup — dihitung ulang tiap kolom K diisi) dan halaman
+ * perjalanan/Overview (sel P & Total/S saat rekap-selesai). `beda-sp` tetap dipasang sebagai penanda umum
+ * "S ≠ P". **Ditulis SESUDAH aturan `pasangan-sp`** karena spesifisitasnya sama — kalau ditulis lebih
+ * dulu, latar pasangan yang menang dan warnanya hilang.
+ */
+table.tbl td.beda-sp { font-weight: 700; }
+table.tbl td.beda-sp.kurang { background-color: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+table.tbl td.beda-sp.lebih { background-color: rgba(21, 128, 61, 0.13); color: #15803d; }
+table.tbl td.beda-sp.kurang input { color: #b91c1c; font-weight: 800; }
+table.tbl td.beda-sp.lebih input { color: #15803d; font-weight: 800; }
+/*
+ * IKON VALID di LAYAR (permintaan user: tulisan "Valid" diganti ikon — lingkaran hijau + centang putih —
+ * dan ikonnya pindah ke **kolom P**; kolom S tetap menampilkan angka setorannya). Hijau yang dipakai
+ * sama dengan penanda "setoran lebih"/"Lebih" (#15803d). Ukuran 17 px supaya tinggi baris tabel tidak
+ * berubah; `display: block` + `margin: auto` menaruhnya di tengah sel.
+ */
+table.tbl td.valid-ikon { text-align: center; }
+table.tbl td.valid-ikon svg.ikon-valid { width: 17px; height: 17px; display: block; margin: 0 auto; }
+/*
+ * Baris catatan otomatis selisih di kartu Catatan (layar) — warnanya mengikuti arahnya seperti sel S & P:
+ * setoran kurang = merah, setoran lebih = hijau.
+ */
+.rinci-list li.catatan-selisih .rinci-nama { font-weight: 700; }
+/*
+ * Blok **"Catatan Selisih"** di kartu Catatan (layar) — dipisah dari daftar catatan otomatis biasa
+ * (permintaan user: "buat catatan baru, dengan tulisan catatan selisih dan berikan nomor catatan"):
+ * diberi jarak & garis pemisah tipis di atasnya supaya jelas bloknya sendiri, dengan nomor sendiri.
+ */
+.catatan-otomatis.blok-catatan-selisih { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.rinci-list li.catatan-selisih.kurang .rinci-nama { color: #b91c1c; }
+.rinci-list li.catatan-selisih.lebih .rinci-nama { color: #15803d; }
 table.tbl th.kolom-nb, table.tbl td.kolom-nb { width: 150px; }
 table.tbl td.kolom-s input, table.tbl td.kolom-nb input { width: 58px; padding: 7px 4px; text-align: center; }
 /* stepper kecil untuk kolom "B Berikutnya" (tombol − / +) */
@@ -828,6 +884,28 @@ table.tbl td.kolom-nb input:not(:placeholder-shown) { border-style: solid; borde
 /* baris TOTAL & kepala tabel rekap: pekat, tidak transparan */
 table.tbl tfoot td { font-weight: 800; background: var(--tbl-head-bg); }
 .info-kotak.tiga { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/*
+ * LIMA kotak sebaris (Overview laporan SELESAI: B · T · K · S · P).
+ * Permintaan user: *"di halaman overview selesai b,t,k,s,p buat sejajar 5 kotak"* + jawaban pilihan
+ * "Ya, satu baris 5 kotak di HP juga (huruf & keterangan dikecilkan agar muat)" → di layar sempit
+ * kolomnya TIDAK turun jadi 3 + 2 lagi, melainkan tetap 5 sebaris dengan gap, padding, dan ukuran huruf
+ * yang dikecilkan (diukur di 390 px & 360 px dengan huruf "Sangat besar": tidak ada yang meluber).
+ */
+.info-kotak.lima { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 700px) {
+  .info-kotak.lima { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .info-kotak.lima .kotak-info { padding: 9px 2px; border-radius: 10px; }
+  .info-kotak.lima .kotak-info .label { font-size: calc(10.5px * var(--f, 1)); letter-spacing: 0.2px; padding-bottom: 4px; margin-bottom: 2px; }
+  .info-kotak.lima .kotak-info .value { font-size: calc(15px * var(--f, 1)); }
+  .info-kotak.lima .kotak-info .note { font-size: calc(9px * var(--f, 1)); overflow-wrap: anywhere; }
+}
+@media (max-width: 430px) {
+  .info-kotak.lima { gap: 5px; }
+  .info-kotak.lima .kotak-info { padding: 8px 1px; }
+  .info-kotak.lima .kotak-info .label { font-size: calc(10px * var(--f, 1)); }
+  .info-kotak.lima .kotak-info .value { font-size: calc(14px * var(--f, 1)); }
+  .info-kotak.lima .kotak-info .note { font-size: calc(8.6px * var(--f, 1)); }
+}
 .scan-aksi { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
 .scan-aksi .btn { margin-top: 0 !important; }
 /* baris atas kartu daftar: judul kiri, lalu statistik + ikon cara input dalam SATU baris */
@@ -1521,12 +1599,34 @@ tr.baris-dihapus { background: rgba(220, 38, 38, 0.06); }
 
 /* ---------- kotak info B/T/K/S dalam satu baris ---------- */
 .info-kotak { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+/*
+ * KOTAK RINGKASAN (B · T · P · Total / B · T · K · S / Kembali · Setoran · Selisih …).
+ *
+ * Tata letak dalamnya **tiga baris yang SEJAJAR antar kotak**: judul (B/T/P/Total) · angka · keterangan.
+ * Karena itu isinya memakai GRID dengan tiga baris tetap dan isinya menempel ke ATAS (`align-content:
+ * start`) — bukan `justify-content: center` seperti dulu.
+ *
+ * Keluhan user: *"jadikan b,t,p,total sebagai header, tulisan angka dan keterangan di bawahnya sejajar"*.
+ * Sebelum ini, kotak yang keterangannya **dua baris** (mis. "sesuai laporan sales" / "barang yang harus
+ * dikembalikan") mendorong judul & angkanya NAIK ±5 px dibanding kotak yang keterangannya satu baris
+ * ("dibawa"/"tambahan") — terukur pada Overview 390 px: judul kotak B/T di y=252 sedangkan P/Total di
+ * y=247. Dengan isi menempel ke atas, ketiga baris itu selalu berada di ketinggian yang sama di keempat
+ * kotak (kotak-kotaknya sendiri sudah sama tinggi karena grid `.info-kotak`).
+ */
 .kotak-info {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  display: grid; grid-template-rows: auto auto 1fr; justify-items: center; align-content: start; gap: 2px;
   padding: 12px 8px; text-align: center; border-radius: 13px; min-width: 0;
   border: 1px solid var(--line); background: var(--solid);
 }
+/*
+ * JUDUL kotak dibaca sebagai **header** kolomnya: lebar penuh + garis pemisah tipis di bawahnya, sehingga
+ * B · T · P · Total tampak seperti baris kepala dan angka/keterangannya sebagai isi kolom.
+ * Warnanya memakai `currentColor` supaya tetap terbaca di kotak bergradien aksen (kotak Rekap) — jangan
+ * diganti warna pekat, garisnya akan hilang di atas gradien.
+ */
 .kotak-info .label {
+  width: 100%; padding-bottom: 5px; margin-bottom: 3px;
+  border-bottom: 1px solid var(--line);
   font-size: calc(12px * var(--f, 1)); font-weight: 800; letter-spacing: 0.6px; color: var(--indigo);
 }
 .kotak-info .value { font-size: calc(21px * var(--f, 1)); font-weight: 800; line-height: 1.15; font-variant-numeric: tabular-nums; }
@@ -1586,15 +1686,36 @@ table.tbl th.kolom-hapus, table.tbl td.kolom-hapus { width: 46px; }
   box-shadow: 0 6px 16px rgba(var(--aksen-rgb), 0.28); transition: 0.16s;
 }
 .kotak-info.kotak-rekap .label, .kotak-info.kotak-rekap .value { color: #fff; }
-.kotak-info.kotak-rekap .note { color: rgba(255, 255, 255, 0.85); font-weight: 650; }
+/* garis header kotak Rekap (latar gradien aksen): putih transparan supaya tetap terlihat */
+.kotak-info.kotak-rekap .label { border-bottom-color: rgba(255, 255, 255, 0.45); }
+.kotak-info.kotak-rekap .note { color: rgba(255, 255, 255, 0.92); font-weight: 650; }
 .kotak-info.kotak-rekap:hover { filter: brightness(1.06); transform: translateY(-1px); }
 .kotak-info.kotak-rekap:focus-visible { outline: 2px solid rgba(var(--aksen-rgb), 0.6); outline-offset: 2px; }
 /* kalau rekap di kotak itu ada selisih, tetap diberi tanda merah yang terbaca di atas gradien aksen */
 .kotak-info.kotak-rekap.kotak-waspada { box-shadow: 0 0 0 2px #b91c1c inset, 0 6px 16px rgba(185, 28, 28, 0.25); }
-.kotak-info.kotak-rekap.kotak-waspada .note { color: #ffe4e6; }
+.kotak-info.kotak-rekap.kotak-waspada .note { color: rgba(255, 255, 255, 0.92); }
 
 .kotak-info.kotak-waspada { border-color: rgba(220, 38, 38, 0.35); background: rgba(220, 38, 38, 0.06); }
 .kotak-info.kotak-waspada .label, .kotak-info.kotak-waspada .note { color: #b91c1c; }
+/*
+ * BUG NYATA (keluhan user: *"Angka rekap tidak terbaca"*, dari tangkapan layar surat jalan berstatus
+ * Menunggu Rekap): kotak **Rekap** yang bertanda selisih jadi berlatar **MERAH PUCAT** karena aturan
+ * `.kotak-info.kotak-waspada` di atas MENIMPA gradien aksennya, sementara `.value`-nya tetap **PUTIH**
+ * dari aturan `.kotak-info.kotak-rekap` — angka rekamnya hilang sama sekali (kontras ±1,1:1). Terukur
+ * pada layar 390 px: `value` = rgb(255,255,255) di atas latar rgb(253,246,246).
+ *
+ * Perbaikan: untuk kotak Rekap, penanda selisih cukup **cincin merah** (aturan
+ * `.kotak-rekap.kotak-waspada` di atas), sedangkan gradien aksen + tulisan putihnya DIPERTAHANKAN.
+ * Aturan ini WAJIB ditulis SESUDAH blok `.kotak-info.kotak-waspada` — kalau ditaruh sebelum, latar
+ * pucat itu menang lagi (spesifisitasnya sama) dan angkanya kembali tidak terbaca.
+ */
+.kotak-info.kotak-rekap.kotak-waspada {
+  background: linear-gradient(135deg, var(--indigo), var(--violet));
+  border-color: transparent;
+}
+.kotak-info.kotak-rekap.kotak-waspada .label,
+.kotak-info.kotak-rekap.kotak-waspada .value { color: #fff; }
+.kotak-info.kotak-rekap.kotak-waspada .note { color: rgba(255, 255, 255, 0.92); }
 @media (max-width: 700px) {
   .info-kotak { gap: 8px; }
   .kotak-info { padding: 9px 4px; border-radius: 11px; }
@@ -2403,7 +2524,8 @@ table.tbl.tbl-tengah tr.baris-tanggal > td {
 .rinci-list .rinci-nama { min-width: 0; overflow-wrap: anywhere; }
 /* catatan otomatis: tidak bisa diedit (permintaan user) & diurut bernomor 1, 2, 3 … */
 .catatan-otomatis .rinci-list li { justify-content: flex-start; }
-.rinci-list .rinci-no { flex: 0 0 auto; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* jarak kecil antara nomor & teks (sebelumnya menempel: "1.17/10/2026 …") */
+.rinci-list .rinci-no { flex: 0 0 auto; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
 /* catatan otomatis: tidak bisa diedit (permintaan user) */
 .catatan-otomatis { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .label-otomatis { font-size: calc(11.8px * var(--f, 1)); font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px; }

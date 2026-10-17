@@ -4,11 +4,27 @@ const { modePilih } = require('./mode');
 const { opsiCetak } = require('./cetak');
 const { kepalaPerjalanan } = require('./sesi');
 const { noSurat } = require('../lib/kode');
+const { VERSI_DOKUMEN } = require('../lib/versiDokumen');
 
+/*
+ * CATATAN kolom **P** (dulu berlabel "Jual (P)", sekarang cukup "P" — permintaan user "semua keterangan
+ * jual (p) ubah ke p saja"): berisi jumlah barang yang dilaporkan TERJUAL oleh sales (diisi di halaman
+ * `/sesi/:id/jual`). Hanya-baca di halaman ini, letaknya tepat di samping kolom Setoran (S) dan keduanya
+ * memakai kelas `pasangan-sp` (latar tipis yang sama + celah) supaya tampak sebagai pasangan pembanding;
+ * selnya ditandai warna oleh skrip di bawah begitu angka S berbeda dengan P.
+ *
+ * Penjelasan ini SENGAJA ditulis sebagai komentar JS (bukan komentar HTML di dalam baris tabel) karena
+ * komentar HTML ikut terkirim ke browser dan bisa menggagalkan pemeriksaan "label lama sudah hilang"
+ * (jebakan #30).
+ */
 exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', bolehTambah = false, daftarMaster = [] }) {
   const relevan = items.filter((i) => i.b + i.t > 0);
   const totB = relevan.reduce((a, i) => a + i.b, 0);
   const totT = relevan.reduce((a, i) => a + i.t, 0);
+  // total kolom P = akumulasi laporan penjualan sales (dipakai baris TOTAL tabel)
+  const totP = items.reduce((a, i) => a + (Number(i.p) || 0), 0);
+  // total kolom "B Berikutnya": kalau 0, tombol Kunci Rekap TIDAK membuat surat jalan baru (ada peringatan)
+  const totNbAwal = items.reduce((a, i) => a + (Number(i.nb) || 0), 0);
 
   /*
    * permintaan user: "tambahan barang pada rekap penjualan BUKAN untuk membuat barang baru, tapi memilih
@@ -31,8 +47,8 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
       const autoS = i.s === null || i.s === undefined;
       return `<tr id="row_${i.id}" data-id="${i.id}" data-kode="${esc(i.kode)}" data-baru="${baru ? 1 : 0}" data-cari="${esc((i.kode + ' ' + i.nama).toLowerCase())}" class="${ada || baru ? '' : 'sembunyi'}${baru ? ' baris-baru' : ''}">
         <td class="beku"><span class="nm">${esc(i.nama)}</span>${baru ? '<span class="badge b-ungu badge-baru">baru</span>' : ''}</td>
-        <td class="num kolom-bt" data-b="${i.b}">${baru ? '&mdash;' : i.b || ''}</td>
-        <td class="num kolom-bt" data-t="${i.t}">${baru ? '&mdash;' : i.t || ''}</td>
+        <td class="num tengah kolom-bt" data-b="${i.b}">${baru ? '&mdash;' : i.b || ''}</td>
+        <td class="num tengah kolom-bt" data-t="${i.t}">${baru ? '&mdash;' : i.t || ''}</td>
         <td class="tengah kolom-k">${
           baru
             ? '<span class="kunci-nilai" title="Barang baru — belum ikut perjalanan ini">&mdash;</span>'
@@ -42,17 +58,18 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
           <button type="button" data-plus data-target="#k_${i.id}">+</button>
         </span>`
         }</td>
-        <td class="tengah kolom-s">${
+        <td class="tengah kolom-s pasangan-sp">${
           baru
             ? '<span class="kunci-nilai">&mdash;</span>'
             : `<input type="number" name="s_${i.id}" id="s_${i.id}" value="${autoS ? '' : i.s}" placeholder="${setoranEfektif(i)}" data-s ${autoS ? 'data-otomatis="1"' : ''}>`
         }</td>
+        <td class="tengah kolom-p pasangan-sp" data-p="${Number(i.p) || 0}">${baru ? '&mdash;' : angka(Number(i.p) || 0)}</td>
         <td class="tengah kolom-nb"><span class="qty qty-mini">
           <button type="button" data-minus data-target="#nb_${i.id}">−</button>
           <input type="number" min="0" name="nb_${i.id}" id="nb_${i.id}" value="${i.nb ? i.nb : ''}" data-nb placeholder="0" title="Jumlah barang yang akan dibawa pada surat jalan berikutnya">
           <button type="button" data-plus data-target="#nb_${i.id}">+</button>
         </span></td>
-        <td class="num kolom-scan"><span class="badge b-abu" id="scan_${i.id}">0</span></td>
+        <td class="num tengah kolom-scan"><span class="badge b-abu" id="scan_${i.id}">0</span></td>
         <td class="tengah kolom-hapus">${
           baru
             ? `<button type="button" class="btn-hapus-baris" data-hapus-baru="${i.id}" title="Hapus ${esc(i.nama)} dari daftar rekap (salah memasukkan)" aria-label="Hapus ${esc(i.nama)} dari daftar rekap"><span class="ikon-hapus">🗑</span></button>`
@@ -80,8 +97,18 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
 <script>
 (function(){
   const base = window.APP_BASE || '';
+  const salesNama = ${JSON.stringify(String(sesi.sales_nama || ''))};
   // peran read-only (sales) tidak boleh menyimpan → simpan otomatis dimatikan supaya tidak ada status palsu
   const BOLEH_SIMPAN = ${bolehTambah ? 'true' : 'false'};
+  /*
+   * Penanda merah "S ≠ P" (permintaan user: *"jika kolom s tidak sama dengan p maka kolomnya merah"*)
+   * hanya dijalankan kalau perjalanan ini MEMANG punya laporan penjualan (total P > 0). Kalau seluruh P
+   * masih 0 (surat jalan lama / sales belum mengisi), setiap baris akan berwarna tanpa guna — sama dengan
+   * alasan di views/print.js → bolehBandingP().
+   * Warnanya mengikuti ARAH: setoran kurang = MERAH, setoran lebih = HIJAU (keduanya dihitung hidup tiap
+   * kolom K diisi, karena mengubah K mengubah setorannya).
+   */
+  const ADA_PENJUALAN = ${totP > 0 ? 'true' : 'false'};
   function angkainp(inp){ return parseInt(inp && inp.value, 10) || 0; }
   /** Satu baris: hitung setoran otomatis / tandai kelebihan K. */
   function bariskan(tr){
@@ -108,30 +135,66 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
     kInp.classList.toggle('lebih', lebih);
     sInp.classList.toggle('setoran-negatif', tampil < 0);
     tr.classList.toggle('k-lebih', lebih);
-    return { kb, kt, kv, sv: auto ? Math.max(0, otomatis) : angkainp(sInp), lebih };
+    // kolom P = laporan sales, hanya dibaca (tidak diubah di halaman ini)
+    const selP = tr.querySelector('td[data-p]');
+    const kp = parseInt(selP && selP.dataset.p, 10) || 0;
+    const sv = auto ? Math.max(0, otomatis) : angkainp(sInp);
+    /*
+     * PENANDA MERAH (permintaan user: *"jika kolom s tidak sama dengan p maka kolomnya merah"*):
+     * sel P dan sel Setoran (S) ditandai kelas beda-sp begitu angka S tidak sama dengan P.
+     * Dihitung ulang setiap kolom K/S berubah karena fungsi ini dipanggil dari hitung().
+     */
+    /*
+     * Warna sel S & P menurut ARAH selisih (permintaan user: *"jika kolom s tidak sama dengan p maka
+     * kolomnya merah"* + *"Jika barang setoran lebih, maka tulisan nya Hijau"*):
+     *   - setoran KURANG dari penjualan (sv < kp) → kelas kurang (MERAH);
+     *   - setoran LEBIH dari penjualan (sv > kp) → kelas lebih (HIJAU);
+     *   - sama → tidak ada penanda.
+     * Kelas beda-sp tetap dipasang sebagai penanda umum "S ≠ P" (dipakai skrip uji & CSS dasar).
+     */
+    const beda = ADA_PENJUALAN && Number(sv) !== Number(kp);
+    const arah = beda ? (Number(sv) > Number(kp) ? 'lebih' : 'kurang') : '';
+    const selS = sInp.closest('td');
+    [selP, selS].forEach(function (td) {
+      if (!td) return;
+      td.classList.toggle('beda-sp', beda);
+      td.classList.toggle('lebih', arah === 'lebih');
+      td.classList.toggle('kurang', arah === 'kurang');
+    });
+    return { kb, kt, kv, kp, sv, lebih, beda, arah };
   }
   function hitung(){
-    let b=0,t=0,k=0,s=0,nb=0, terhitung=0, barisScan=0, kelebihan=0;
+    let b=0,t=0,k=0,s=0,p=0,nb=0, terhitung=0, barisScan=0, kelebihan=0;
     document.querySelectorAll('tr[data-id]').forEach(function(tr){
       if (tr.classList.contains('sembunyi')) return;
       const r = bariskan(tr);
-      b += r.kb; t += r.kt; k += r.kv; s += r.sv;
+      b += r.kb; t += r.kt; k += r.kv; s += r.sv; p += r.kp;
       const nbInp = tr.querySelector('[data-nb]');
       if (nbInp) nb += parseInt(nbInp.value, 10) || 0;
       if (r.kv > 0) terhitung++;
       if (r.lebih) kelebihan++;
       if (tr.querySelector('.kolom-scan .badge').textContent !== '0') barisScan++;
     });
-    const selisih = b + t - k - s;
+    /*
+     * SELISIH = **S − P** (permintaan user: "selisih di hitung dari s dikurangi p"): beda antara hasil
+     * rekap (Setoran) dengan jumlah yang dilaporkan terjual oleh sales (kolom P).
+     * Selisih LAMA (B + T − K − S) tetap ditampilkan sebagai keterangan kecil di bawah angkanya.
+     */
+    const selisih = s - p;
+    const selisihBarang = b + t - k - s;
     document.getElementById('tK').textContent = k;
     document.getElementById('tS').textContent = s;
     document.getElementById('tK2').textContent = k;
     document.getElementById('tS2').textContent = s;
+    const elP = document.getElementById('tP');
+    if (elP) elP.textContent = p;
     const el = document.getElementById('tSel');
     el.textContent = selisih === 0 ? '0 (cocok)' : String(selisih);
     el.style.color = selisih === 0 ? '#047857' : '#b91c1c';
+    const elNote = document.getElementById('tSelNote');
+    if (elNote) elNote.textContent = selisihBarang === 0 ? '' : 'selisih barang ' + selisihBarang;
     const kotakSel = document.getElementById('kotakSel');
-    if (kotakSel) kotakSel.classList.toggle('kotak-waspada', selisih !== 0);
+    if (kotakSel) kotakSel.classList.toggle('kotak-waspada', selisih !== 0 || selisihBarang !== 0);
     const cat = document.getElementById('catRekap');
     if (cat){
       cat.hidden = kelebihan === 0;
@@ -142,6 +205,34 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
     // kolom "B Berikutnya": angka untuk surat jalan berikutnya (tidak ikut total rekap)
     const elNb = document.getElementById('tNb');
     if (elNb) elNb.textContent = nb;
+    /*
+     * POPUP TOMBOL "Kunci Rekap & Buat Surat Jalan" mengikuti isi kolom B Berikutnya (permintaan user:
+     * *"Rekap tetap bisa dilakukan meski berikutnya tidak di isi dengan peringatan dan konfirmasi"*):
+     * kalau kolomnya kosong → judul & pesannya jadi PERINGATAN bahwa rekap dikunci TANPA surat jalan baru.
+     * Diperbarui di sini (bukan hanya saat halaman dirender) supaya cocok dengan angka yang sedang diisi.
+     */
+    /*
+     * Tombolnya hanya ada untuk peran yang boleh mengubah; pada peran read-only elemennya tidak dirender
+     * sehingga blok ini dilewati (jangan menambah markup tombol di sisi klien).
+     */
+    const btnLanjut = document.getElementById('btnKunciLanjut');
+    if (btnLanjut) {
+      /*
+       * Sejak revisi ke-185, rekap yang dikunci TANPA penjualan (P) tidak berstatus "Selesai" melainkan
+       * kembali "Ongoing" (menunggu data penjualan) supaya tetap tampil di dasbor — jadi peringatannya
+       * ikut menyebutkan itu, jangan sampai pengguna mengira laporannya sudah final.
+       */
+      const catatanP = ADA_PENJUALAN ? '' : ' CATATAN: penjualan (P) masih KOSONG, jadi status surat jalan ini TIDAK menjadi "Selesai" melainkan kembali "Ongoing" (menunggu data penjualan) dan tetap tampil di dasbor — angka rekap tersimpan, jalankan rekap lagi setelah penjualan diisi untuk menyelesaikannya.';
+      if (nb > 0) {
+        btnLanjut.dataset.judul = 'Kunci rekap & buat surat jalan baru?';
+        btnLanjut.dataset.pesan = 'Rekap akan DIKUNCI — angka tidak bisa diubah lagi — dan surat jalan baru langsung dibuat untuk Sales ' + (salesNama || '-') + ' hari ini, berisi barang dari kolom B Berikutnya (total ' + nb + ' barang).' + catatanP;
+        btnLanjut.dataset.ok = 'Ya, kunci & buat';
+      } else {
+        btnLanjut.dataset.judul = 'Kunci rekap TANPA surat jalan berikutnya?';
+        btnLanjut.dataset.pesan = 'PERINGATAN: kolom "B Berikutnya" masih KOSONG, jadi rekap ini akan DIKUNCI TANPA membuat surat jalan baru (tidak ada barang yang diteruskan). Angka rekap tidak bisa diubah lagi setelah dikunci.' + catatanP;
+        btnLanjut.dataset.ok = 'Ya, kunci';
+      }
+    }
     const elNetNb = document.getElementById('netLanjut');
     if (elNetNb) elNetNb.textContent = nb;
     document.getElementById('netBaris').textContent = terhitung + ' / ' + document.querySelectorAll('tr[data-id]:not(.sembunyi)').length;
@@ -156,6 +247,16 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
    */
   const formSimpan = document.getElementById('formRekap');
   const statusSimpan = document.getElementById('statusSimpan');
+  /*
+   * ALAMAT SIMPAN diambil SEKALI saat halaman dimuat — jangan dibaca ulang dari atribut action.
+   * Alasannya bug nyata: menekan tombol ber-formaction (mis. "Kunci Rekap & Buat Surat Jalan")
+   * membuat public/app.js MEMINDAHKAN alamat tombol itu ke atribut action form (supaya form.submit()
+   * menghormatinya). Kalau simpan-otomatis membaca atribut itu lagi, simpanan yang sedang tertunda
+   * ikut menuju /kunci-lanjut — pengiriman KEDUA yang ditolak dengan pesan "Kunci rekap & surat jalan
+   * berikutnya hanya bisa dari halaman rekap" padahal rekapnya sudah terkunci (gejala: pesan galat
+   * muncul padahal berhasil, muncul-tenggelam tergantung urutan permintaan).
+   */
+  const simpanUrl = formSimpan ? formSimpan.getAttribute('action') : '';
   let timerSimpan = null, sedangSimpan = false, antreSimpan = false, sentuhSejakSimpan = false;
 
   function tampilStatus(teks, galat){
@@ -178,7 +279,7 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
       const data = new URLSearchParams();
       new FormData(formSimpan).forEach(function(v, k){ data.append(k, v); });
       formSimpan.querySelectorAll('[data-s][data-otomatis]').forEach(function(inp){ data.set(inp.name, ''); });
-      const r = await fetch(formSimpan.getAttribute('action'), {
+      const r = await fetch(simpanUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: data,
@@ -246,7 +347,7 @@ exports.render = function ({ sesi, items, base, pesan, scan, hariIni = '', boleh
         new FormData(f).forEach(function(v, k){ data.append(k, v); });
         f.querySelectorAll('[data-s][data-otomatis]').forEach(function(i){ data.set(i.name, ''); });
         tampilStatus('Menyimpan…', false);
-        fetch(f.getAttribute('action'), {
+        fetch(simpanUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: data,
@@ -330,7 +431,7 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
           judul: 'Cetak PDF',
           opsi: [
             // Permintaan user: semua cetak dokumen laporan = PDF (tanpa halaman cetak HTML lagi)
-            { href: `/cetak/surat-jalan-pdf/${sesi.id}`, label: 'PDF Surat Jalan & Setoran (F4)', ket: 'terbuka di penampil PDF · kertas F4' },
+            { href: `/cetak/surat-jalan-pdf/${sesi.id}?v=${VERSI_DOKUMEN}`, label: 'PDF Surat Jalan & Setoran (F4)', ket: 'terbuka di penampil PDF · kertas F4' },
             /*
              * permintaan user terbaru: "cetak memo di logo print tidak usah" → opsi PDF Memo Pengambilan
              * DIHAPUS dari menu logo printer (halaman perjalanan & halaman rekap ini). Memonya tetap ada
@@ -380,21 +481,25 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
       <div class="tbl-wrap" style="max-height:66vh;overflow:auto">
         <table class="tbl rapat tbl-pekat kolom-beku" id="tblRekap">
           <thead><tr>
-            <th class="beku">Nama Barang</th><th class="num kolom-bt">B</th><th class="num kolom-bt">T</th>
-            <th class="tengah kolom-k">Kembali (K)</th><th class="tengah kolom-s">Setoran (S)</th>
+            <th class="beku">Nama Barang</th>
+            <th class="num tengah kolom-bt">B</th><th class="num tengah kolom-bt">T</th>
+            <th class="tengah kolom-k">Kembali (K)</th>
+            <th class="tengah kolom-s pasangan-sp" title="Jumlah barang yang disetor / terjual menurut hitungan rekap">Setoran (S)</th>
+            <th class="tengah kolom-p pasangan-sp" title="Jumlah barang yang dilaporkan TERJUAL oleh sales (diisi di halaman Penjualan) — pasangan pembanding kolom Setoran (S)">P</th>
             <th class="tengah kolom-nb" title="Angka di kolom ini menjadi kolom Dibawa (B) surat jalan berikutnya">B Berikutnya</th>
-            <th class="num kolom-scan">Scan</th><th class="tengah kolom-hapus"></th>
+            <th class="num tengah kolom-scan">Scan</th><th class="tengah kolom-hapus"></th>
           </tr></thead>
           <tbody>${baris}</tbody>
           <tfoot>
             <tr>
               <td class="beku">TOTAL</td>
-              <td class="num kolom-bt">${angka(totB)}</td>
-              <td class="num kolom-bt">${angka(totT)}</td>
+              <td class="num tengah kolom-bt">${angka(totB)}</td>
+              <td class="num tengah kolom-bt">${angka(totT)}</td>
               <td class="tengah kolom-k" id="tK">0</td>
-              <td class="tengah kolom-s" id="tS">0</td>
+              <td class="tengah kolom-s pasangan-sp" id="tS">0</td>
+              <td class="tengah kolom-p pasangan-sp" id="tP">${angka(totP)}</td>
               <td class="tengah kolom-nb" id="tNb">0</td>
-              <td class="kolom-scan"></td><td class="kolom-hapus"></td>
+              <td class="num tengah kolom-scan"></td><td class="tengah kolom-hapus"></td>
             </tr>
           </tfoot>
         </table>
@@ -403,7 +508,10 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
       <div class="info-kotak tiga tiga-ringkas" style="margin-top:16px">
         <div class="kotak-info"><div class="label">Kembali (K)</div><div class="value" id="tK2">0</div></div>
         <div class="kotak-info"><div class="label">Setoran (S)</div><div class="value" id="tS2">0</div></div>
-        <div class="kotak-info" id="kotakSel"><div class="label">Selisih</div><div class="value" id="tSel">0 (cocok)</div></div>
+        <div class="kotak-info" id="kotakSel">
+          <div class="label">Selisih (S − P)</div><div class="value" id="tSel">0 (cocok)</div>
+          <div class="note" id="tSelNote"></div>
+        </div>
       </div>
       ${
         bolehTambah
@@ -420,9 +528,11 @@ ${pesan ? `<div class="alert alert-info">${esc(pesan)}</div>` : ''}
         ${
           bolehTambah
             ? `<button class="btn btn-sukses" type="submit" formaction="${base}/sesi/${sesi.id}/kunci-lanjut" id="btnKunciLanjut"
-            data-konfirmasi-tema data-judul="Kunci rekap &amp; buat surat jalan baru?"
-            data-pesan="Rekap ${esc(noSurat(sesi))} akan DIKUNCI — angka tidak bisa diubah lagi — dan surat jalan baru langsung dibuat untuk Sales ${esc(sesi.sales_nama || '-')} hari ini, berisi barang dari kolom B Berikutnya."
-            data-ok="Ya, kunci &amp; buat">Kunci Rekap &amp; Buat Surat Jalan</button>`
+            data-konfirmasi-tema data-judul="${totNbAwal > 0 ? 'Kunci rekap &amp; buat surat jalan baru?' : 'Kunci rekap TANPA surat jalan berikutnya?'}"
+            data-pesan="${totNbAwal > 0
+              ? `Rekap ${esc(noSurat(sesi))} akan DIKUNCI — angka tidak bisa diubah lagi — dan surat jalan baru langsung dibuat untuk Sales ${esc(sesi.sales_nama || '-')} hari ini, berisi barang dari kolom B Berikutnya.`
+              : `PERINGATAN: kolom "B Berikutnya" masih KOSONG, jadi rekap ${esc(noSurat(sesi))} akan DIKUNCI TANPA membuat surat jalan baru (tidak ada barang yang diteruskan). Angka rekap tidak bisa diubah lagi setelah dikunci.`}"
+            data-ok="${totNbAwal > 0 ? 'Ya, kunci &amp; buat' : 'Ya, kunci'}">Kunci Rekap &amp; Buat Surat Jalan</button>`
             : ''
         }
       </div>
